@@ -32,27 +32,14 @@ def visualize_spatial_network(G, title="Spatial Network Visualization"):
                            edgecolors='black', ax=ax, label="Intermediate Nodes")
                            
     # Draw Origin
-    nx.draw_networkx_nodes(
-        G, pos, 
-        nodelist=origins, 
-        node_size=400, 
-        node_color='lime', 
-        node_shape='*', 
-        edgecolors='black', 
-        ax=ax, 
-        label="Origin (O)"
+    nx.draw_networkx_nodes(G, pos, nodelist=origins, node_size=400, 
+                           node_color='lime', node_shape='*', edgecolors='black', 
+                           ax=ax, label="Origin (O)"
     )
                            
     # Draw Destination
-    nx.draw_networkx_nodes(
-        G, pos, 
-        nodelist=destinations, 
-        node_size=400, 
-        node_color='red', 
-        node_shape='X', 
-        edgecolors='black', 
-        ax=ax, 
-        label="Destination (D)"
+    nx.draw_networkx_nodes(G, pos, nodelist=destinations, node_size=400, 
+                           node_color='red', node_shape='X', edgecolors='black', ax=ax, label="Destination (D)"
     )
 
     # Categorize edges
@@ -100,8 +87,12 @@ def visualize_spatial_network(G, title="Spatial Network Visualization"):
 # example usage
 if __name__ == "__main__":
     # Generate a sample spatial graph
-    generator = SpatialGraphGenerator(n_nodes=30, d_min=0.03)
+    generator = SpatialGraphGenerator(n_nodes=100, d_min=0.03)
     G_multi, _ = generator.build_graph(regime='multidistrict', C=4)
+    G_sparse, _ = generator.build_graph(regime='sparse')
+    G_dense, _ = generator.build_graph(regime='dense')
     
     # Visualize the generated graph
     visualize_spatial_network(G_multi, title="Sample Multidistrict Spatial Network")
+    visualize_spatial_network(G_sparse, title="Sample Sparse Spatial Network")
+    visualize_spatial_network(G_dense, title="Sample Dense Spatial Network")
