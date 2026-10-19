@@ -47,10 +47,10 @@ def visualize_spatial_network(G, title="Spatial Network Visualization"):
     local_roads = [(u, v) for u, v, attr in G.edges(data=True) if attr.get('is_highway') == 0]
     
     # Draw Edges
-    nx.draw_networkx_edges(G, pos, edgelist=local_roads, width=1.0, 
-                           alpha=0.5, edge_color='gray', ax=ax)
+    nx.draw_networkx_edges(G, pos, edgelist=local_roads, width=1.5, 
+                           alpha=0.65, edge_color='dimgray', ax=ax)
                            
-    nx.draw_networkx_edges(G, pos, edgelist=highways, width=2.5, 
+    nx.draw_networkx_edges(G, pos, edgelist=highways, width=2.2, 
                            alpha=0.8, edge_color='darkblue', style='dashed', ax=ax)
 
     # Edge Labels (Length and Travel Time)
@@ -87,8 +87,8 @@ def visualize_spatial_network(G, title="Spatial Network Visualization"):
 # example usage
 if __name__ == "__main__":
     # Generate a sample spatial graph
-    generator = SpatialGraphGenerator(n_nodes=100, d_min=0.03)
-    G_multi, _ = generator.build_graph(regime='multidistrict', C=4)
+    generator = SpatialGraphGenerator(n_nodes=50, d_min=0.05)
+    G_multi, _ = generator.build_graph(regime='multidistrict', C=8)
     G_sparse, _ = generator.build_graph(regime='sparse')
     G_dense, _ = generator.build_graph(regime='dense')
     

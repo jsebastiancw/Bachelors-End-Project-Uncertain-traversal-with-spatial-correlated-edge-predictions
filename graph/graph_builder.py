@@ -19,18 +19,29 @@ class SpatialGraphGenerator:
         self.d_min = d_min
         self.max_attempts = max_attempts
         
-    def _sample_nodes(self, num_nodes, bounds, existing_nodes=None):
+    def _sample_nodes(self, num_nodes, bounds, existing_nodes=None, d_min=None, allow_relaxation=True):
         """
         Rejection sampling algorithm (den Hollander, 2025) to place nodes.
-        Enforces minimum node separation distance d_min.
+        Enforces minimum node separation distance d_min, with optional adaptive
+        relaxation to prevent jamming failures at high node/cluster densities.
         """
         nodes = [] if existing_nodes is None else existing_nodes.tolist()
+        target_len = num_nodes if existing_nodes is None else len(existing_nodes) + num_nodes
         x_min, x_max, y_min, y_max = bounds
+        current_d_min = self.d_min if d_min is None else d_min
         
         attempts = 0
-        while len(nodes) < (num_nodes if existing_nodes is None else len(existing_nodes) + num_nodes):
+        relaxations = 0
+        max_relaxations = 25
+        
+        while len(nodes) < target_len:
             if attempts > self.max_attempts:
-                raise ValueError("Max attempts reached. Decrease d_min or N.")
+                if allow_relaxation and relaxations < max_relaxations:
+                    current_d_min *= 0.85
+                    attempts = 0
+                    relaxations += 1
+                else:
+                    raise ValueError("Max attempts reached. Decrease d_min or N.")
                 
             candidate = [np.random.uniform(x_min, x_max), np.random.uniform(y_min, y_max)]
             if not nodes:
@@ -38,7 +49,7 @@ class SpatialGraphGenerator:
                 continue
                 
             dists = np.linalg.norm(np.array(nodes) - np.array(candidate), axis=1)
-            if np.all(dists >= self.d_min):
+            if np.all(dists >= current_d_min):
                 nodes.append(candidate)
             attempts += 1
             
@@ -58,28 +69,47 @@ class SpatialGraphGenerator:
         
         if regime in ['sparse', 'dense']:
             # Uniformly distribute remaining nodes across the full [0,1]^2 space
-            pos[1:self.N-1] = self._sample_nodes(self.N - 2, [0.0, 1.0, 0.0, 1.0], existing_nodes=pos[[0, self.N-1]])
+            pos[1:self.N-1] = self._sample_nodes(
+                self.N - 2, [0.0, 1.0, 0.0, 1.0], existing_nodes=pos[[0, self.N-1]]
+            )
             
         elif regime == 'multidistrict':
-            # Geometric Block Model: Partition space into C centroids (Galhotra et al., 2018)
-            centroids = self._sample_nodes(C, [0.1, 0.9, 0.1, 0.9])
-            nodes_per_cluster = (self.N - 2) // C
+            # Geometric Block Model: Partition space into C well-separated centroids (Galhotra et al., 2018)
+            centroid_d_min = min(0.45, 0.65 / np.sqrt(max(1, C)))
+            centroids = self._sample_nodes(C, [0.12, 0.88, 0.12, 0.88], d_min=centroid_d_min)
+            
+            # Scale cluster radius with C so districts remain visually compact and distinct
+            cluster_radius = min(0.14, 0.28 / np.sqrt(max(1, C)))
+            
+            intermediate_count = self.N - 2
+            base_count = intermediate_count // C
+            remainder = intermediate_count % C
+            
+            # Include both Origin and Destination in existing_nodes from the start
+            placed_nodes = [pos[0].tolist(), pos[self.N-1].tolist()]
             
             idx = 1
             for c in range(C):
-                cluster_ids[idx:idx+nodes_per_cluster] = c + 1
+                n_cluster = base_count + (1 if c < remainder else 0)
+                if n_cluster <= 0:
+                    continue
+                cluster_ids[idx:idx+n_cluster] = c + 1
                 cx, cy = centroids[c]
-                # Sample locally around centroids
-                bounds = [max(0, cx-0.25), min(1, cx+0.25), max(0, cy-0.25), min(1, cy+0.25)]
-                pos[idx:idx+nodes_per_cluster] = self._sample_nodes(nodes_per_cluster, bounds, existing_nodes=pos[:idx])
-                idx += nodes_per_cluster
+                # Sample locally within compact bounds around each district centroid
+                bounds = [
+                    max(0.0, cx - cluster_radius), min(1.0, cx + cluster_radius),
+                    max(0.0, cy - cluster_radius), min(1.0, cy + cluster_radius)
+                ]
+                sampled = self._sample_nodes(
+                    n_cluster, bounds, existing_nodes=np.array(placed_nodes)
+                )
+                pos[idx:idx+n_cluster] = sampled
+                placed_nodes.extend(sampled.tolist())
+                idx += n_cluster
                 
-            # Assign any remaining nodes to the last cluster
-            if idx < self.N - 1:
-                remainder = (self.N - 1) - idx
-                cluster_ids[idx:self.N-1] = C
-                bounds = [max(0, cx-0.25), min(1, cx+0.25), max(0, cy-0.25), min(1, cy+0.25)]
-                pos[idx:self.N-1] = self._sample_nodes(remainder, bounds, existing_nodes=pos[:idx])
+            # Assign Origin and Destination to their nearest district cluster
+            cluster_ids[0] = int(np.argmin(np.linalg.norm(centroids - pos[0], axis=1)) + 1)
+            cluster_ids[self.N-1] = int(np.argmin(np.linalg.norm(centroids - pos[self.N-1], axis=1)) + 1)
                 
         return pos, cluster_ids
 
@@ -133,26 +163,35 @@ class SpatialGraphGenerator:
         """
         # Regime hyperparameters
         regime_params = {
-            'sparse': {'l_max': 0.4, 'alpha': 2, 'beta': 5, 'v_e': 2.0},
-            'dense': {'l_max': 0.2, 'alpha': 5, 'beta': 2, 'v_e': 1.0},
+            'sparse': {'l_max': 0.22, 'alpha': 2, 'beta': 5, 'v_e': 2.0},
+            'dense': {'l_max': 0.28, 'alpha': 5, 'beta': 2, 'v_e': 1.0},
             'multidistrict': {
-                'r_s': 0.25, 'alpha_local': 5, 'v_local': 1.0,   # Intra-cluster (r_s)
-                'r_d': 0.50, 'alpha_highway': 1, 'v_highway': 2.5, # Inter-cluster (r_d)
+                'r_s': 0.22, 'alpha_local': 5, 'v_local': 1.0,     # Intra-cluster (r_s)
+                'r_d': 0.45, 'alpha_highway': 1.5, 'v_highway': 2.5, # Inter-cluster (r_d)
                 'beta': 2
             }
         }
-        params = regime_params[regime]
+        params = dict(regime_params[regime])
         
         connected = False
         pos, cluster_ids = self._generate_node_placements(regime, C)
         
         # Resample edge draws until O -> D is traversable
         attempts = 0
+        placement_resets = 0
         while not connected:
-            if attempts > 100:
-                # Reset node placement if edge density is theoretically too low to connect
+            if attempts > 50:
+                # Reset node placement if edge density is too low to connect
                 pos, cluster_ids = self._generate_node_placements(regime, C)
                 attempts = 0
+                placement_resets += 1
+                # Gradually expand cutoff radius if extreme parameters prevent O->D connectivity
+                if placement_resets % 3 == 0:
+                    if 'l_max' in params:
+                        params['l_max'] = min(1.0, params['l_max'] * 1.15)
+                    else:
+                        params['r_d'] = min(1.0, params['r_d'] * 1.15)
+                        params['r_s'] = min(1.0, params['r_s'] * 1.10)
                 
             G = self._draw_edges(pos, cluster_ids, regime, params)
             connected = nx.has_path(G, 0, self.N - 1)

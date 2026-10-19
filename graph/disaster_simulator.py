@@ -115,7 +115,7 @@ def evaluate_hazard_field(x, y, disaster_config):
 # 2. Required Core Functions
 # ==========================================
 
-def apply_disaster_probabilities(G, disaster_config, num_edge_samples=10):
+def apply_disaster_probabilities(G, disaster_config, num_edge_samples=10, max_blockage_prob=0.92):
     """
     Evaluates m equidistant sample points along every edge e = (u, v) in G,
     computes point failure risks q_{e,j}, and aggregates them into discrete edge 
@@ -139,7 +139,7 @@ def apply_disaster_probabilities(G, disaster_config, num_edge_samples=10):
         
         # Poisson Binomial aggregation (Wang, 1993)
         survival_prob = np.prod(1.0 - q_ej)
-        q_e = float(1.0 - survival_prob)
+        q_e = float(np.clip(1.0 - survival_prob, 0.0, max_blockage_prob))
         
         G.edges[u, v]['blockage_prob'] = q_e
         G.edges[u, v]['point_probs'] = q_ej.tolist()
@@ -147,11 +147,14 @@ def apply_disaster_probabilities(G, disaster_config, num_edge_samples=10):
     return G
 
 
-def sample_disaster_realization(G, max_resamples=1000):
+def sample_disaster_realization(G, max_resamples=1000, allow_relaxation=True):
     """
     Draws independent Bernoulli trials B_e ~ Bern(q_e) for every edge in G.
     Verifies if Origin (0) -> Destination (N-1) remains connected in G_offline.
     Resamples edge statuses until a traversable O -> D path exists (den Hollander, 2025).
+    If max_resamples is exceeded and allow_relaxation=True, gradually scales down
+    blockage probabilities or preserves the safest O -> D path so extreme disaster
+    configurations remain playable without raising an exception.
     
     Returns:
         G_offline (nx.Graph): Graph with blocked edges removed.
@@ -164,23 +167,59 @@ def sample_disaster_realization(G, max_resamples=1000):
     origin = origins[0] if origins else min(nodes)
     destination = destinations[0] if destinations else max(nodes)
     
-    for attempt in range(1, max_resamples + 1):
+    scale = 1.0
+    max_relax_stages = 6 if allow_relaxation else 1
+    attempts_per_stage = max(1, max_resamples // max_relax_stages) if allow_relaxation else max_resamples
+    
+    for stage in range(max_relax_stages):
+        for _ in range(attempts_per_stage):
+            G_offline = G.copy()
+            blocked_edges = []
+            
+            for u, v, data in G.edges(data=True):
+                q_e = data.get('blockage_prob', 0.0) * scale
+                is_blocked = (np.random.rand() < q_e)
+                
+                # Store realized status on the original graph as well
+                G.edges[u, v]['is_blocked'] = int(is_blocked)
+                
+                if is_blocked:
+                    blocked_edges.append((u, v))
+                    G_offline.remove_edge(u, v)
+                    
+            if nx.has_path(G_offline, origin, destination):
+                return G_offline, blocked_edges
+                
+        scale *= 0.80
+        
+    if allow_relaxation and nx.has_path(G, origin, destination):
+        # Fallback: preserve the minimum-risk O -> D path to guarantee connectivity
+        def edge_risk_weight(u, v, d):
+            q = min(0.999, d.get('blockage_prob', 0.0))
+            return -np.log(1.0 - q)
+            
+        safest_path = nx.shortest_path(G, origin, destination, weight=edge_risk_weight)
+        protected_edges = {
+            (min(safest_path[k], safest_path[k + 1]), max(safest_path[k], safest_path[k + 1]))
+            for k in range(len(safest_path) - 1)
+        }
+        
         G_offline = G.copy()
         blocked_edges = []
-        
         for u, v, data in G.edges(data=True):
-            q_e = data.get('blockage_prob', 0.0)
-            is_blocked = (np.random.rand() < q_e)
-            
-            # Store realized status on the original graph as well
+            edge_key = (min(u, v), max(u, v))
+            if edge_key in protected_edges:
+                is_blocked = False
+            else:
+                q_e = data.get('blockage_prob', 0.0)
+                is_blocked = (np.random.rand() < q_e)
+                
             G.edges[u, v]['is_blocked'] = int(is_blocked)
-            
             if is_blocked:
                 blocked_edges.append((u, v))
                 G_offline.remove_edge(u, v)
                 
-        if nx.has_path(G_offline, origin, destination):
-            return G_offline, blocked_edges
+        return G_offline, blocked_edges
             
     raise RuntimeError(
         f"Failed to sample an O->D connected G_offline after {max_resamples} attempts. "
@@ -292,18 +331,42 @@ def visualize_graph_with_disaster(G, disaster_config, show_labels=True, grid_res
     plt.tight_layout()
     plt.show()
 
-def generate_random_disaster(num_epicenters=3):
-    """Procedurally generates random disaster epicenters and ellipsoids."""
+def generate_random_disaster(num_epicenters=3, G=None, safe_buffer=0.12):
+    """
+    Procedurally generates random disaster epicenters and ellipsoids.
+    Scales epicenter radius and intensity softly when num_epicenters is large,
+    and optionally keeps epicenters a safe buffer away from Origin/Destination.
+    """
     kernels = ['gaussian', 'exponential', 'epanechnikov', 'biweight', 'triangular', 'uniform']
     disaster_config = []
     
+    # Scale intensity and radius slightly when many epicenters are requested
+    scale_factor = 1.0 / np.sqrt(max(1.0, num_epicenters / 3.0))
+    h_max = max(0.18, 0.40 * scale_factor)
+    gamma_max = max(0.08, 0.20 * scale_factor)
+    
+    protected_coords = []
+    if G is not None:
+        pos = nx.get_node_attributes(G, 'pos')
+        for n, d in G.nodes(data=True):
+            if d.get('is_origin', False) or d.get('is_destination', False):
+                protected_coords.append(np.array(pos[n]))
+    
     for _ in range(num_epicenters):
+        for _ in range(100):
+            x0 = float(np.random.uniform(0.1, 0.9))
+            y0 = float(np.random.uniform(0.1, 0.9))
+            if not protected_coords or all(
+                np.linalg.norm(np.array([x0, y0]) - pc) >= safe_buffer for pc in protected_coords
+            ):
+                break
+                
         disaster_config.append({
-            'x0': float(np.random.uniform(0.1, 0.9)),
-            'y0': float(np.random.uniform(0.1, 0.9)),
+            'x0': x0,
+            'y0': y0,
             'kernel': str(np.random.choice(kernels)),
-            'h': float(np.random.uniform(0.15, 0.40)),
-            'gamma': float(np.random.uniform(0.05, 0.20)),
+            'h': float(np.random.uniform(0.15, h_max)),
+            'gamma': float(np.random.uniform(0.05, gamma_max)),
             'a': 1.0,
             'b': float(np.random.uniform(0.3, 0.9)),
             'phi': float(np.random.uniform(0.0, 180.0))
@@ -319,12 +382,12 @@ if __name__ == "__main__":
     #np.random.seed(42)
     
     # 1. Build a 50-node synthetic spatial network (den Hollander Base Case scale)
-    builder = SpatialGraphGenerator(n_nodes=50, d_min=0.03)
-    G, _ = builder.build_graph(regime='multidistrict', C=3)
+    builder = SpatialGraphGenerator(n_nodes=30, d_min=0.05)
+    G, _ = builder.build_graph(regime='multidistrict', C=4)
     
     # 2. Define the 4-Epicenter Ellipsoidal Disaster Scenario (den Hollander, 2025 - Eq. 8.1)
     # K = {(x0, y0, f, h, gamma, a, b, phi)_k}
-    disaster_config = generate_random_disaster(num_epicenters=4)
+    disaster_config = generate_random_disaster(num_epicenters=3, G=G)
     
     # 3. Compute Point-to-Edge Risks and Poisson Binomial Edge Blockage Probabilities (m = 10)
     G = apply_disaster_probabilities(G, disaster_config, num_edge_samples=10)
