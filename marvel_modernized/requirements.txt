@@ -1,0 +1,21 @@
+# Core PyTorch (Install with CUDA 12.1/12.4 wheel index, e.g.:
+# pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124)
+torch>=2.2.0
+torchvision>=0.17.0
+torchaudio>=2.2.0
+
+# PyTorch Geometric
+torch-geometric>=2.5.0
+
+# Graph & Scientific Computing
+networkx>=3.0
+numpy>=1.24.0
+scipy>=1.10.0
+pandas>=2.0.0
+openpyxl>=3.1.0
+matplotlib>=3.7.0
+tqdm>=4.65.0
+
+# Optional experiment tracking
+# wandb>=0.16.0
+
