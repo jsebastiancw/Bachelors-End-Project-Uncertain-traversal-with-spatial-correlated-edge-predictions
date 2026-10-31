@@ -150,10 +150,12 @@ class GAT(nn.Module):
         model_path: str,
         emb_size: int,
         save_interval: int = 500,
+        window_size: int = 50,
     ):
         self.to(device)
         success_rates = []
         total_losses = []
+        recent_successes = []
         success_count = 0
 
         if model_path and model_path != 'your_model_path':
@@ -164,6 +166,7 @@ class GAT(nn.Module):
             total_reward = 0.0
             total_loss = 0.0
             done = False
+            ep_success = False
 
             while not done:
                 reward, done, loss, success = env.step(
@@ -172,16 +175,24 @@ class GAT(nn.Module):
                 total_reward += float(reward)
                 total_loss += float(loss.item() if isinstance(loss, torch.Tensor) else loss)
                 if success:
-                    success_count += 1
+                    ep_success = True
 
-            success_rate = success_count / (episode + 1)
-            success_rates.append(success_rate)
+            if ep_success:
+                success_count += 1
+            recent_successes.append(1 if ep_success else 0)
+            if len(recent_successes) > window_size:
+                recent_successes.pop(0)
+
+            window_success_rate = sum(recent_successes) / len(recent_successes)
+            cum_success_rate = success_count / (episode + 1)
+            success_rates.append(cum_success_rate)
             total_losses.append(total_loss)
 
             print(
                 f"Episode {episode + 1}/{num_episodes} | "
-                f"Success Rate: {success_rate:.4f} | "
-                f"Total Loss: {total_loss:.4f}"
+                f"Loss: {total_loss:.4f} | "
+                f"Window Succ (last {len(recent_successes)}): {window_success_rate * 100:.1f}% | "
+                f"Cum. Succ: {cum_success_rate * 100:.1f}%"
             )
 
             if scheduler is not None:
@@ -190,7 +201,8 @@ class GAT(nn.Module):
             if self.use_wandb:
                 wandb.log({
                     "episode": episode + 1,
-                    "success_rate": success_rate,
+                    "window_success_rate": window_success_rate,
+                    "cumulative_success_rate": cum_success_rate,
                     "total_loss": total_loss,
                 })
 

@@ -59,6 +59,15 @@ venv.bak/
 wandb/
 runs/
 logs/
+gurobi.log
+**/Benchmark_Record/
+**/output_data/
+
+# MATLAB temporary and output files
+*.asv
+*.m~
+*.mat
+*.fig
 
 # OS files
 .DS_Store
