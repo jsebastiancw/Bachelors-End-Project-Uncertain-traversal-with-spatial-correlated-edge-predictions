@@ -148,11 +148,13 @@ def evaluate_graph_scenarios(
     k_hop_list: Sequence[int] = (1, 2),
     max_query_edges: int = 350,
     seed: int = 101,
+    batch_size: int = 256,
+    max_sub_nodes: Optional[int] = 150,
 ) -> List[Dict[str, Any]]:
     """
     Runs simulated GP disasters on `G_base`, masks edges according to
     `observability_rates` (10%, 30%, 50% revealed -> 90%, 70%, 50% unknown),
-    and evaluates `predictor.predict_edges(...)` across hop distances h=1 and h=2.
+    and evaluates `predictor.predict_edges(...)` across hop distances in `k_hop_list`.
     """
     rng = np.random.default_rng(seed)
     records: List[Dict[str, Any]] = []
@@ -218,6 +220,8 @@ def evaluate_graph_scenarios(
                     edge_status_dict=edge_status_dict,
                     target_edges=target_edges,
                     k_hop=k_hop,
+                    batch_size=batch_size,
+                    max_sub_nodes=max_sub_nodes,
                 )
 
                 if predictor.device.type == "cuda":
@@ -305,12 +309,25 @@ def run_diagnostics(
     checkpoint_path: Optional[str] = None,
     num_procedural_per_regime: int = 4,
     seed: int = 2026,
-):
-    predictor = SEALPredictor(checkpoint_path=checkpoint_path)
+    eval_k_hop: int = 2,
+    device: Optional[str] = None,
+    batch_size: int = 256,
+    max_sub_nodes: Optional[int] = 150,
+    report_txt_path: Optional[str] = None,
+    results_json_path: Optional[str] = None,
+) -> Dict[str, Any]:
+    predictor = SEALPredictor(checkpoint_path=checkpoint_path, device=device)
     out_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "diagnostics")
     os.makedirs(out_dir, exist_ok=True)
-    report_txt_path = os.path.join(out_dir, "diagnostic_report.txt")
-    results_json_path = os.path.join(out_dir, "diagnostic_results.json")
+    if report_txt_path is None:
+        report_txt_path = os.path.join(out_dir, "diagnostic_report.txt")
+    if results_json_path is None:
+        results_json_path = os.path.join(out_dir, "diagnostic_results.json")
+    os.makedirs(os.path.dirname(os.path.abspath(report_txt_path)), exist_ok=True)
+    os.makedirs(os.path.dirname(os.path.abspath(results_json_path)), exist_ok=True)
+
+    # Evaluate both h=1 and the target eval_k_hop (default 2) so Table D always has a 1-hop vs k-hop comparison
+    k_hop_list = sorted(list({1, 2, int(eval_k_hop)})) if eval_k_hop != 2 else (1, 2)
 
     lines: List[str] = []
 
@@ -319,10 +336,11 @@ def run_diagnostics(
         lines.append(msg)
 
     log("=" * 100)
-    log("DELIVERABLE 2: STANDALONE SEAL SPATIAL PREDICTION MODULE — DIAGNOSTIC & BENCHMARK REPORT")
+    log(f"DELIVERABLE 2: STANDALONE SEAL SPATIAL PREDICTION MODULE — DIAGNOSTIC & BENCHMARK REPORT (k_hop={eval_k_hop})")
     log("=" * 100)
     log(f"Device             : {predictor.device}")
     log(f"Checkpoint Loaded  : {predictor.checkpoint_path or 'Untrained/Initialized Weights'}")
+    log(f"Subgraph Config    : eval_k_hop={eval_k_hop} | max_nodes_per_subgraph={max_sub_nodes if max_sub_nodes else 'Unbounded'}")
     log(f"Design Paradigm    : Purely Inductive (DRNL + 2D Coords + Rel. Midpoint + Cluster + Edge-Aware GINEConv + SortPool)")
     log("-" * 100)
 
@@ -343,8 +361,10 @@ def run_diagnostics(
                 graph_label=f"Procedural-{regime}",
                 observability_rates=(0.10, 0.30, 0.50),
                 disaster_types=("earthquake", "tsunami", "flood"),
-                k_hop_list=(1, 2),
+                k_hop_list=k_hop_list,
                 seed=seed + r_idx * 100 + g_i * 17,
+                batch_size=batch_size,
+                max_sub_nodes=max_sub_nodes,
             )
             procedural_records.extend(recs)
 
@@ -368,20 +388,22 @@ def run_diagnostics(
             graph_label=net_name,
             observability_rates=(0.10, 0.30, 0.50),
             disaster_types=("earthquake", "tsunami", "flood"),
-            k_hop_list=(1, 2),
+            k_hop_list=k_hop_list,
             max_query_edges=300,
             seed=seed + 500 + c_idx * 53,
+            batch_size=batch_size,
+            max_sub_nodes=max_sub_nodes,
         )
         canonical_records.extend(recs)
 
     all_records = procedural_records + canonical_records
-    all_k2 = [r for r in all_records if r["k_hop"] == 2]
+    all_target_k = [r for r in all_records if r["k_hop"] == eval_k_hop]
 
     # -------------------------------------------------------------------------
-    # Table A: Performance by Network & Regime (k_hop = 2)
+    # Table A: Performance by Network & Regime (k_hop = eval_k_hop)
     # -------------------------------------------------------------------------
     log("\n" + "=" * 100)
-    log("TABLE A: PERFORMANCE BY NETWORK TOPOLOGY (k_hop = 2, Aggregated Across Disasters & Observability)")
+    log(f"TABLE A: PERFORMANCE BY NETWORK TOPOLOGY (k_hop = {eval_k_hop}, Aggregated Across Disasters & Observability)")
     log("=" * 100)
     header_a = (
         f"{'Network / Regime':<24} | {'Queries':>7} | {'ROC-AUC':>7} | {'AP':>7} | "
@@ -401,7 +423,7 @@ def run_diagnostics(
     ]
     per_network_summary: Dict[str, Any] = {}
     for glabel in group_labels:
-        sub_recs = [r for r in all_k2 if r["graph_label"] == glabel]
+        sub_recs = [r for r in all_target_k if r["graph_label"] == glabel]
         agg = aggregate_records(sub_recs)
         per_network_summary[glabel] = agg
         log(
@@ -411,37 +433,37 @@ def run_diagnostics(
         )
 
     log("-" * len(header_a))
-    proc_k2_agg = aggregate_records([r for r in procedural_records if r["k_hop"] == 2])
-    canon_k2_agg = aggregate_records([r for r in canonical_records if r["k_hop"] == 2])
-    overall_k2_agg = aggregate_records(all_k2)
+    proc_k_agg = aggregate_records([r for r in procedural_records if r["k_hop"] == eval_k_hop])
+    canon_k_agg = aggregate_records([r for r in canonical_records if r["k_hop"] == eval_k_hop])
+    overall_k_agg = aggregate_records(all_target_k)
 
     log(
-        f"{'ALL PROCEDURAL (Held-Out)':<24} | {proc_k2_agg['n_edges']:7d} | {proc_k2_agg['roc_auc']:7.4f} | "
-        f"{proc_k2_agg['ap']:7.4f} | {proc_k2_agg['mse_gp']:8.4f} | {proc_k2_agg['mae_gp']:8.4f} | "
-        f"{proc_k2_agg['brier']:7.4f} | {proc_k2_agg['ms_per_query']:10.3f} ms"
+        f"{'ALL PROCEDURAL (Held-Out)':<24} | {proc_k_agg['n_edges']:7d} | {proc_k_agg['roc_auc']:7.4f} | "
+        f"{proc_k_agg['ap']:7.4f} | {proc_k_agg['mse_gp']:8.4f} | {proc_k_agg['mae_gp']:8.4f} | "
+        f"{proc_k_agg['brier']:7.4f} | {proc_k_agg['ms_per_query']:10.3f} ms"
     )
     log(
-        f"{'ALL CANONICAL (Zero-Shot)':<24} | {canon_k2_agg['n_edges']:7d} | {canon_k2_agg['roc_auc']:7.4f} | "
-        f"{canon_k2_agg['ap']:7.4f} | {canon_k2_agg['mse_gp']:8.4f} | {canon_k2_agg['mae_gp']:8.4f} | "
-        f"{canon_k2_agg['brier']:7.4f} | {canon_k2_agg['ms_per_query']:10.3f} ms"
+        f"{'ALL CANONICAL (Zero-Shot)':<24} | {canon_k_agg['n_edges']:7d} | {canon_k_agg['roc_auc']:7.4f} | "
+        f"{canon_k_agg['ap']:7.4f} | {canon_k_agg['mse_gp']:8.4f} | {canon_k_agg['mae_gp']:8.4f} | "
+        f"{canon_k_agg['brier']:7.4f} | {canon_k_agg['ms_per_query']:10.3f} ms"
     )
     log(
-        f"{'OVERALL COMBINED':<24} | {overall_k2_agg['n_edges']:7d} | {overall_k2_agg['roc_auc']:7.4f} | "
-        f"{overall_k2_agg['ap']:7.4f} | {overall_k2_agg['mse_gp']:8.4f} | {overall_k2_agg['mae_gp']:8.4f} | "
-        f"{overall_k2_agg['brier']:7.4f} | {overall_k2_agg['ms_per_query']:10.3f} ms"
+        f"{'OVERALL COMBINED':<24} | {overall_k_agg['n_edges']:7d} | {overall_k_agg['roc_auc']:7.4f} | "
+        f"{overall_k_agg['ap']:7.4f} | {overall_k_agg['mse_gp']:8.4f} | {overall_k_agg['mae_gp']:8.4f} | "
+        f"{overall_k_agg['brier']:7.4f} | {overall_k_agg['ms_per_query']:10.3f} ms"
     )
 
     # -------------------------------------------------------------------------
     # Table B: Breakdown by Disaster Topology ('earthquake', 'tsunami', 'flood')
     # -------------------------------------------------------------------------
     log("\n" + "=" * 100)
-    log("TABLE B: BREAKDOWN BY GP DISASTER REGIME (k_hop = 2)")
+    log(f"TABLE B: BREAKDOWN BY GP DISASTER REGIME (k_hop = {eval_k_hop})")
     log("=" * 100)
     log(header_a)
     log("-" * len(header_a))
     disaster_summary: Dict[str, Any] = {}
     for dtype in ("earthquake", "tsunami", "flood"):
-        drecs = [r for r in all_k2 if r["disaster_type"] == dtype]
+        drecs = [r for r in all_target_k if r["disaster_type"] == dtype]
         agg = aggregate_records(drecs)
         disaster_summary[dtype] = agg
         log(
@@ -454,7 +476,7 @@ def run_diagnostics(
     # Table C: Breakdown by Observability Percentage (10%, 30%, 50% Map Revealed)
     # -------------------------------------------------------------------------
     log("\n" + "=" * 100)
-    log("TABLE C: BREAKDOWN BY OBSERVABILITY PERCENTAGE (10%, 30%, 50% Map Revealed)")
+    log(f"TABLE C: BREAKDOWN BY OBSERVABILITY PERCENTAGE (10%, 30%, 50% Map Revealed, k_hop = {eval_k_hop})")
     log("=" * 100)
     header_c = (
         f"{'Map Revealed (%)':<24} | {'Queries':>7} | {'ROC-AUC':>7} | {'AP':>7} | "
@@ -464,7 +486,7 @@ def run_diagnostics(
     log("-" * len(header_c))
     obs_summary: Dict[str, Any] = {}
     for obs_rate in (0.10, 0.30, 0.50):
-        orecs = [r for r in all_k2 if abs(r["obs_rate"] - obs_rate) < 1e-4]
+        orecs = [r for r in all_target_k if abs(r["obs_rate"] - obs_rate) < 1e-4]
         agg = aggregate_records(orecs)
         label = f"{int(obs_rate * 100)}% Revealed ({int((1 - obs_rate) * 100)}% Unk)"
         obs_summary[f"{int(obs_rate * 100)}pct"] = agg
@@ -475,55 +497,53 @@ def run_diagnostics(
         )
 
     # -------------------------------------------------------------------------
-    # Table D: Breakdown by Hop Distance (h = 1 vs. h = 2)
+    # Table D: Breakdown by Hop Distance (h = 1 vs. h = 2 / eval_k_hop)
     # -------------------------------------------------------------------------
     log("\n" + "=" * 100)
-    log("TABLE D: BREAKDOWN BY HOP DISTANCE (h = 1 vs. h = 2)")
+    log("TABLE D: BREAKDOWN BY HOP DISTANCE")
     log("=" * 100)
     log(header_a)
     log("-" * len(header_a))
 
-    # D.1: Enclosing Subgraph Radius k_hop = 1 vs k_hop = 2
-    k1_agg = aggregate_records([r for r in all_records if r["k_hop"] == 1])
-    k2_agg = overall_k2_agg
-    log(
-        f"{'Subgraph Radius h=1':<24} | {k1_agg['n_edges']:7d} | {k1_agg['roc_auc']:7.4f} | {k1_agg['ap']:7.4f} | "
-        f"{k1_agg['mse_gp']:8.4f} | {k1_agg['mae_gp']:8.4f} | {k1_agg['brier']:7.4f} | "
-        f"{k1_agg['ms_per_query']:10.3f} ms"
-    )
-    log(
-        f"{'Subgraph Radius h=2':<24} | {k2_agg['n_edges']:7d} | {k2_agg['roc_auc']:7.4f} | {k2_agg['ap']:7.4f} | "
-        f"{k2_agg['mse_gp']:8.4f} | {k2_agg['mae_gp']:8.4f} | {k2_agg['brier']:7.4f} | "
-        f"{k2_agg['ms_per_query']:10.3f} ms"
-    )
+    hop_breakdown_dict: Dict[str, Any] = {}
+    for kh in k_hop_list:
+        kh_agg = aggregate_records([r for r in all_records if r["k_hop"] == kh])
+        hop_breakdown_dict[f"subgraph_radius_h{kh}"] = kh_agg
+        log(
+            f"{f'Subgraph Radius h={kh}':<24} | {kh_agg['n_edges']:7d} | {kh_agg['roc_auc']:7.4f} | {kh_agg['ap']:7.4f} | "
+            f"{kh_agg['mse_gp']:8.4f} | {kh_agg['mae_gp']:8.4f} | {kh_agg['brier']:7.4f} | "
+            f"{kh_agg['ms_per_query']:10.3f} ms"
+        )
 
     # D.2: Topological Hop Distance to Nearest Observed Edge (h=1 adjacent vs h=2 multi-hop)
-    y_pred_all = np.concatenate([r["y_pred"] for r in all_k2])
-    y_gp_all = np.concatenate([r["y_gp"] for r in all_k2])
-    y_bin_all = np.concatenate([r["y_bin"] for r in all_k2])
-    topo_hops_all = np.concatenate([r["topo_hops"] for r in all_k2])
+    y_pred_all = np.concatenate([r["y_pred"] for r in all_target_k])
+    y_gp_all = np.concatenate([r["y_gp"] for r in all_target_k])
+    y_bin_all = np.concatenate([r["y_bin"] for r in all_target_k])
+    topo_hops_all = np.concatenate([r["topo_hops"] for r in all_target_k])
 
     mask_h1 = topo_hops_all == 1
     mask_h2 = topo_hops_all == 2
     topo_h1_metrics = compute_metrics_bundle(y_pred_all[mask_h1], y_gp_all[mask_h1], y_bin_all[mask_h1])
     topo_h2_metrics = compute_metrics_bundle(y_pred_all[mask_h2], y_gp_all[mask_h2], y_bin_all[mask_h2])
+    hop_breakdown_dict["obs_distance_h1"] = topo_h1_metrics
+    hop_breakdown_dict["obs_distance_h2"] = topo_h2_metrics
 
     log(
         f"{'Obs-Distance h=1 (Adj.)':<24} | {topo_h1_metrics['n_edges']:7d} | {topo_h1_metrics['roc_auc']:7.4f} | "
         f"{topo_h1_metrics['ap']:7.4f} | {topo_h1_metrics['mse_gp']:8.4f} | {topo_h1_metrics['mae_gp']:8.4f} | "
-        f"{topo_h1_metrics['brier']:7.4f} | {k2_agg['ms_per_query']:10.3f} ms"
+        f"{topo_h1_metrics['brier']:7.4f} | {overall_k_agg['ms_per_query']:10.3f} ms"
     )
     log(
         f"{'Obs-Distance h=2 (Far)':<24} | {topo_h2_metrics['n_edges']:7d} | {topo_h2_metrics['roc_auc']:7.4f} | "
         f"{topo_h2_metrics['ap']:7.4f} | {topo_h2_metrics['mse_gp']:8.4f} | {topo_h2_metrics['mae_gp']:8.4f} | "
-        f"{topo_h2_metrics['brier']:7.4f} | {k2_agg['ms_per_query']:10.3f} ms"
+        f"{topo_h2_metrics['brier']:7.4f} | {overall_k_agg['ms_per_query']:10.3f} ms"
     )
 
     # -------------------------------------------------------------------------
     # Table E: Precision / Recall / F1 Across Decision Thresholds
     # -------------------------------------------------------------------------
     log("\n" + "=" * 100)
-    log("TABLE E: PRECISION / RECALL / F1 ACROSS CLASSIFICATION THRESHOLDS (k_hop = 2)")
+    log(f"TABLE E: PRECISION / RECALL / F1 ACROSS CLASSIFICATION THRESHOLDS (k_hop = {eval_k_hop})")
     log("=" * 100)
     header_e = f"{'Threshold (tau)':<18} | {'Precision':>10} | {'Recall':>10} | {'F1-Score':>10} | {'Accuracy':>10}"
     log(header_e)
@@ -550,37 +570,38 @@ def run_diagnostics(
     with open(report_txt_path, "w", encoding="utf-8") as f:
         f.write("\n".join(lines) + "\n")
 
+    results_payload = {
+        "eval_k_hop": int(eval_k_hop),
+        "overall": overall_k_agg,
+        "procedural": proc_k_agg,
+        "canonical": canon_k_agg,
+        "overall_k2": overall_k_agg,
+        "procedural_k2": proc_k_agg,
+        "canonical_k2": canon_k_agg,
+        "per_network": per_network_summary,
+        "per_disaster": disaster_summary,
+        "per_observability": obs_summary,
+        "hop_breakdown": hop_breakdown_dict,
+        "threshold_sweep": threshold_results,
+        "canonical_graph_stats": canonical_graph_stats,
+        "interface_verification": interface_check,
+        "report_txt_path": report_txt_path,
+        "results_json_path": results_json_path,
+    }
+
     with open(results_json_path, "w", encoding="utf-8") as f:
-        json.dump(
-            {
-                "overall_k2": overall_k2_agg,
-                "procedural_k2": proc_k2_agg,
-                "canonical_k2": canon_k2_agg,
-                "per_network": per_network_summary,
-                "per_disaster": disaster_summary,
-                "per_observability": obs_summary,
-                "hop_breakdown": {
-                    "subgraph_radius_h1": k1_agg,
-                    "subgraph_radius_h2": k2_agg,
-                    "obs_distance_h1": topo_h1_metrics,
-                    "obs_distance_h2": topo_h2_metrics,
-                },
-                "threshold_sweep": threshold_results,
-                "canonical_graph_stats": canonical_graph_stats,
-                "interface_verification": interface_check,
-            },
-            f,
-            indent=2,
-        )
+        json.dump(results_payload, f, indent=2)
 
     print(f"\nSaved Diagnostic Text Report : {report_txt_path}")
     print(f"Saved Diagnostic JSON Metrics: {results_json_path}")
+    return results_payload
 
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Standalone SEAL Diagnostic & Benchmark Script")
     parser.add_argument("--checkpoint", type=str, default=None, help="Path to trained SEAL checkpoint")
     parser.add_argument("--proc-per-regime", type=int, default=4, help="Held-out procedural graphs per regime")
+    parser.add_argument("--k-hop", type=int, default=2, help="Primary enclosing subgraph hop radius to evaluate")
     parser.add_argument("--seed", type=int, default=2026, help="Evaluation random seed")
     return parser.parse_args()
 
@@ -590,5 +611,6 @@ if __name__ == "__main__":
     run_diagnostics(
         checkpoint_path=args.checkpoint,
         num_procedural_per_regime=args.proc_per_regime,
+        eval_k_hop=args.k_hop,
         seed=args.seed,
     )

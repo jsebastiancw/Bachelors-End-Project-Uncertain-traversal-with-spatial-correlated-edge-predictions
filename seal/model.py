@@ -511,13 +511,14 @@ def extract_enclosing_subgraph(
     k_hop: int = 2,
     y_prob: Optional[float] = None,
     y_bin: Optional[float] = None,
-    max_sub_nodes: int = 80,
+    max_sub_nodes: Optional[int] = 150,
 ) -> Data:
     """
     Extracts the k-hop enclosing subgraph G_{(u, v)}^k around `target_edge = (u, v)`
     and constructs the inductive node feature matrix X and edge feature matrix E.
     """
     u, v = target_edge
+    node_cap = max_sub_nodes if (max_sub_nodes is not None and max_sub_nodes > 0) else None
 
     # 1. k-hop BFS expansion from {u, v}
     visited = {u: 0, v: 0}
@@ -532,10 +533,10 @@ def extract_enclosing_subgraph(
             if nbr not in visited:
                 visited[nbr] = depth + 1
                 sub_nodes.append(nbr)
-                if len(sub_nodes) >= max_sub_nodes:
+                if node_cap is not None and len(sub_nodes) >= node_cap:
                     break
                 queue.append((nbr, depth + 1))
-        if len(sub_nodes) >= max_sub_nodes:
+        if node_cap is not None and len(sub_nodes) >= node_cap:
             break
 
     n_sub = len(sub_nodes)
@@ -971,6 +972,7 @@ class SEALModel(nn.Module):
         target_edges: Optional[Sequence[Tuple[int, int]]] = None,
         k_hop: int = 2,
         batch_size: int = 256,
+        max_sub_nodes: Optional[int] = 150,
     ) -> Dict[Tuple[int, int], float]:
         """
         Fast, batched inference method predicting blockage probabilities q_hat_e in [0, 1]
@@ -1011,7 +1013,7 @@ class SEALModel(nn.Module):
             query_map.append(canon_to_idx[ckey])
 
         subgraphs = [
-            extract_enclosing_subgraph(cache, q_edge, k_hop=k_hop)
+            extract_enclosing_subgraph(cache, q_edge, k_hop=k_hop, max_sub_nodes=max_sub_nodes)
             for q_edge in unique_queries
         ]
 
@@ -1086,6 +1088,7 @@ class SEALPredictor:
         target_edges: Optional[Sequence[Tuple[int, int]]] = None,
         k_hop: int = 2,
         batch_size: int = 256,
+        max_sub_nodes: Optional[int] = 150,
     ) -> Dict[Tuple[int, int], float]:
         return self.model.predict_edges(
             nx_graph=nx_graph,
@@ -1093,6 +1096,7 @@ class SEALPredictor:
             target_edges=target_edges,
             k_hop=k_hop,
             batch_size=batch_size,
+            max_sub_nodes=max_sub_nodes,
         )
 
     def update_marvel_adj_and_entropy(

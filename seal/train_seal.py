@@ -79,6 +79,7 @@ def generate_masked_scenario_subgraphs(
     k_hop: int = 2,
     mask_ratios: Tuple[float, ...] = (0.40, 0.60, 0.75, 0.90),
     max_targets_per_mask: int = 48,
+    max_sub_nodes: int = 150,
 ) -> List[Data]:
     """
     Applies a GP disaster scenario to `G_base`, samples a valid binary realization B_e,
@@ -157,6 +158,7 @@ def generate_masked_scenario_subgraphs(
                 k_hop=k_hop,
                 y_prob=gp_probs[(u, v)],
                 y_bin=float(bin_realizations[(u, v)]),
+                max_sub_nodes=max_sub_nodes,
             )
             subgraphs.append(sub)
 
@@ -168,6 +170,7 @@ def build_procedural_dataset(
     k_hop: int = 2,
     seed: int = 42,
     desc: str = "Train",
+    max_sub_nodes: int = 150,
 ) -> List[Data]:
     """
     Builds a diverse dataset of enclosing subgraphs across procedural graph regimes
@@ -202,6 +205,7 @@ def build_procedural_dataset(
                 k_hop=k_hop,
                 mask_ratios=(0.45, 0.65, 0.85),
                 max_targets_per_mask=36,
+                max_sub_nodes=max_sub_nodes,
             )
             dataset.extend(subs)
 
@@ -305,28 +309,45 @@ def train_seal(
     k_hop: int = 2,
     seed: int = 42,
     save_dir: str = None,
+    checkpoint_path: str = None,
+    metrics_path: str = None,
+    device=None,
+    max_sub_nodes: int = 150,
+    return_summary: bool = False,
 ):
     set_all_seeds(seed)
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    if device is None:
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    else:
+        device = torch.device(device)
 
     if save_dir is None:
         save_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "checkpoints")
     os.makedirs(save_dir, exist_ok=True)
-    best_ckpt_path = os.path.join(save_dir, "best_seal_model.pt")
-    metrics_json_path = os.path.join(save_dir, "training_metrics.json")
+    best_ckpt_path = checkpoint_path if checkpoint_path is not None else os.path.join(save_dir, "best_seal_model.pt")
+    metrics_json_path = metrics_path if metrics_path is not None else os.path.join(save_dir, "training_metrics.json")
+    os.makedirs(os.path.dirname(os.path.abspath(best_ckpt_path)), exist_ok=True)
+    os.makedirs(os.path.dirname(os.path.abspath(metrics_json_path)), exist_ok=True)
+
+    train_wall_start = time.perf_counter()
 
     print("=" * 96)
-    print("STANDALONE INDUCTIVE SEAL SPATIAL PREDICTION MODULE — TEACHER-STUDENT TRAINING")
+    print(f"STANDALONE INDUCTIVE SEAL SPATIAL PREDICTION MODULE — TEACHER-STUDENT TRAINING (k_hop={k_hop})")
     print("=" * 96)
     print(f"Device              : {device} ({torch.cuda.get_device_name(0) if device.type == 'cuda' else 'CPU'})")
     print(f"Architecture        : Inductive GINEConv ({num_layers} layers, hidden={hidden_dim}) + SortPooling (k={sortpool_k})")
+    print(f"Subgraph Config     : k_hop={k_hop} | max_nodes_per_subgraph={max_sub_nodes if max_sub_nodes else 'Unbounded'}")
     print(f"Node / Edge Dim     : X={NODE_FEATURE_DIM} (DRNL + 2D Coords + Rel. Midpoint + Cluster + Multi-Scale IDW) | E={EDGE_FEATURE_DIM}")
     print(f"Observability Mask  : 40% - 90% edges masked as Unknown; 10% - 60% revealed as Clear/Blocked")
     print(f"Supervision Targets : Continuous GP Posterior q_e^GP (MSE + KL) + Realized Binary B_e (BCE)")
     print("-" * 96)
 
-    train_data = build_procedural_dataset(num_graphs=num_train_graphs, k_hop=k_hop, seed=seed, desc="Train")
-    val_data = build_procedural_dataset(num_graphs=num_val_graphs, k_hop=k_hop, seed=seed + 1000, desc="Val")
+    train_data = build_procedural_dataset(
+        num_graphs=num_train_graphs, k_hop=k_hop, seed=seed, desc="Train", max_sub_nodes=max_sub_nodes
+    )
+    val_data = build_procedural_dataset(
+        num_graphs=num_val_graphs, k_hop=k_hop, seed=seed + 1000, desc="Val", max_sub_nodes=max_sub_nodes
+    )
 
     train_loader = DataLoader(train_data, batch_size=batch_size, shuffle=True)
     val_loader = DataLoader(val_data, batch_size=batch_size, shuffle=False)
@@ -465,21 +486,28 @@ def train_seal(
             f"{val_metrics['batch_latency_ms']:7.2f}ms | {status_str:>8}"
         )
 
+    train_wall_time_sec = time.perf_counter() - train_wall_start
+    summary_payload = {
+        "k_hop": k_hop,
+        "best_epoch": best_epoch,
+        "best_val_mse": best_val_mse,
+        "train_wall_time_sec": train_wall_time_sec,
+        "best_checkpoint_path": best_ckpt_path,
+        "history": history,
+    }
+
     with open(metrics_json_path, "w", encoding="utf-8") as f:
-        json.dump(
-            {
-                "best_epoch": best_epoch,
-                "best_val_mse": best_val_mse,
-                "history": history,
-            },
-            f,
-            indent=2,
-        )
+        json.dump(summary_payload, f, indent=2)
 
     print("-" * len(header))
-    print(f"Training Complete! Best Val GP MSE: {best_val_mse:.4f} (Epoch {best_epoch})")
+    print(
+        f"Training Complete! Best Val GP MSE: {best_val_mse:.4f} (Epoch {best_epoch}) | "
+        f"Wall-Clock Time: {train_wall_time_sec:.2f}s"
+    )
     print(f"Saved Best Weights : {best_ckpt_path}")
     print(f"Saved Metrics Log  : {metrics_json_path}")
+    if return_summary:
+        return model, best_ckpt_path, summary_payload
     return model, best_ckpt_path
 
 
