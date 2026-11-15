@@ -38,7 +38,7 @@ IDW_SCALES = (0.06, 0.12, 0.22, 0.40)
 # Node feature dimension:
 #   DRNL one-hot (17) + DRNL scalar & flags (4) + coords & relative geometry (11)
 #   + cluster features (11) + local observed degree & multi-scale IDW stats (14) = 57
-NODE_FEATURE_DIM = (MAX_DRNL_LABEL + 1) + 4 + 11 + (3 + NUM_CLUSTER_BUCKETS) + (6 + 2 * len(IDW_SCALES))
+NODE_FEATURE_DIM = (MAX_DRNL_LABEL + 1) + 4 + 11 + (3 + NUM_CLUSTER_BUCKETS) + (6 + 2 * len(IDW_SCALES)+2)
 
 # Edge feature dimension:
 #   [length_raw, length_norm, speed_norm, travel_time_norm, is_highway, same_cluster] (6)
