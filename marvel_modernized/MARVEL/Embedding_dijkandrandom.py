@@ -57,20 +57,18 @@ class EmbeddingResult:
 
 class ShortestPathSkipGram(nn.Module):
     """
-    GPU-accelerated PyTorch Skip-Gram + Structural Shortest-Path Graph Embedding.
+    GPU-accelerated PyTorch Skip-Gram Graph Embedding.
     Replaces legacy CPU `gensim.models.Word2Vec` with vectorized CUDA operations.
     """
-    def __init__(self, num_nodes: int, emb_size: int, struct_dim: int = 8):
+    def __init__(self, num_nodes: int, emb_size: int):
         super().__init__()
         self.num_nodes = num_nodes
         self.emb_size = emb_size
         self.target_embeddings = nn.Embedding(num_nodes, emb_size)
         self.context_embeddings = nn.Embedding(num_nodes, emb_size)
-        self.struct_proj = nn.Linear(struct_dim, emb_size)
 
         nn.init.xavier_uniform_(self.target_embeddings.weight)
         nn.init.xavier_uniform_(self.context_embeddings.weight)
-        nn.init.xavier_uniform_(self.struct_proj.weight)
 
     def forward(self, center_idx: torch.Tensor, pos_ctx_idx: torch.Tensor, neg_ctx_idx: torch.Tensor) -> torch.Tensor:
         """
@@ -93,11 +91,8 @@ class ShortestPathSkipGram(nn.Module):
         return -torch.mean(pos_loss + neg_loss)
 
     @torch.no_grad()
-    def get_embeddings(self, struct_features: torch.Tensor) -> torch.Tensor:
-        base_emb = self.target_embeddings.weight
-        struct_emb = self.struct_proj(struct_features)
-        combined = F.layer_norm(base_emb + struct_emb, (self.emb_size,))
-        return combined
+    def get_embeddings(self) -> torch.Tensor:
+        return self.target_embeddings.weight
 
 
 class Node2Vec:
@@ -112,10 +107,10 @@ class Node2Vec:
         emb_size: int = 128,
         length_walk: int = 50,
         num_walks: int = 10,
-        window_size: int = 4,
-        num_iters: int = 15,
-        n: int = 50,
-        repeat_times: int = 20,
+        window_size: int = 10,
+        num_iters: int = 5,
+        n: int = 475,
+        repeat_times: int = 900,
         device: torch.device = None,
     ):
         self.data_name = data_name
@@ -275,54 +270,6 @@ class Node2Vec:
             walks.extend(self.random_walk_one_step(node, temp_G))
         return walks
 
-    def _compute_structural_features(
-        self,
-        temp_G: nx.DiGraph,
-        node_mapping: dict,
-        goal_nodes: list,
-        struct_dim: int = 8,
-    ) -> torch.Tensor:
-        """
-        Computes an (N, struct_dim) tensor of shortest-path and topological features
-        to each target node on `self.device`.
-        """
-        num_nodes = len(node_mapping)
-        feats = np.zeros((num_nodes, struct_dim), dtype=np.float32)
-
-        # Shortest-path distances & hop counts to up to 2 goal nodes
-        for g_idx, goal in enumerate(goal_nodes[:2]):
-            if goal in temp_G:
-                try:
-                    lengths = nx.single_target_shortest_path_length(temp_G, goal)
-                except Exception:
-                    lengths = {}
-                for node, idx in node_mapping.items():
-                    if node == goal:
-                        feats[idx, g_idx * 2] = 0.0
-                        feats[idx, g_idx * 2 + 1] = 1.0  # Reachable indicator
-                    elif node in temp_G:
-                        try:
-                            cost = nx.dijkstra_path_length(temp_G, node, goal, weight='weight')
-                            feats[idx, g_idx * 2] = 1.0 / (1.0 + cost)
-                            feats[idx, g_idx * 2 + 1] = 1.0
-                        except nx.NetworkXNoPath:
-                            feats[idx, g_idx * 2] = 0.0
-                            feats[idx, g_idx * 2 + 1] = 0.0
-
-        # Degree & local connectivity statistics
-        max_deg = max(1, self.G.number_of_nodes())
-        for node, idx in node_mapping.items():
-            out_deg = temp_G.out_degree(node) if node in temp_G else 0
-            in_deg = temp_G.in_degree(node) if node in temp_G else 0
-            feats[idx, 4] = out_deg / max_deg
-            feats[idx, 5] = in_deg / max_deg
-            if out_deg > 0:
-                costs = [temp_G[node][nbr]['weight'] for nbr in temp_G.neighbors(node)]
-                feats[idx, 6] = 1.0 / (1.0 + float(np.mean(costs)))
-                feats[idx, 7] = 1.0 / (1.0 + float(np.min(costs)))
-
-        return torch.tensor(feats, dtype=torch.float32, device=self.device)
-
     def _extract_skipgram_pairs(self, sequences: list, node_mapping: dict) -> tuple:
         """
         Converts node walk sequences into vectorized (center_idx, context_idx) GPU tensors.
@@ -373,7 +320,6 @@ class Node2Vec:
         all_sequences = paths + random_walks
 
         center_tensor, context_tensor = self._extract_skipgram_pairs(all_sequences, node_mapping)
-        struct_features = self._compute_structural_features(temp_G, node_mapping, goal_nodes)
 
         torch.manual_seed(616)
         model = ShortestPathSkipGram(num_nodes=num_nodes, emb_size=self.emb_size).to(self.device)
@@ -400,5 +346,5 @@ class Node2Vec:
                 optimizer.step()
 
         model.eval()
-        embeddings = model.get_embeddings(struct_features).detach()
+        embeddings = model.get_embeddings().detach()
         return EmbeddingResult(embeddings, node_mapping)

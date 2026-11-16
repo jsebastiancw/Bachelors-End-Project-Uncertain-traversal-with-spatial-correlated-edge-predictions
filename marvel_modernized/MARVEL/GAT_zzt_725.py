@@ -40,33 +40,13 @@ class GAT(nn.Module):
         self.dropout = dropout
         self.use_wandb = use_wandb and HAS_WANDB
 
-        head_dim = max(1, in_channels // heads)
-        gat_out_dim = head_dim * heads
-
-        # Multi-head Graph Attention Layers (PyG GATConv)
-        self.gat_conv1 = GATConv(
+        # Multi-head Graph Attention Layer (PyG GATConv)
+        self.gat_conv = GATConv(
             in_channels=in_channels,
-            out_channels=head_dim,
+            out_channels=int(in_channels / heads),
             heads=heads,
-            concat=True,
-            negative_slope=alpha,
             dropout=dropout,
-            add_self_loops=True,
         )
-        self.proj1 = nn.Linear(gat_out_dim, in_channels) if gat_out_dim != in_channels else nn.Identity()
-        self.norm1 = nn.LayerNorm(in_channels)
-
-        self.gat_conv2 = GATConv(
-            in_channels=in_channels,
-            out_channels=head_dim,
-            heads=heads,
-            concat=True,
-            negative_slope=alpha,
-            dropout=dropout,
-            add_self_loops=True,
-        )
-        self.proj2 = nn.Linear(gat_out_dim, in_channels) if gat_out_dim != in_channels else nn.Identity()
-        self.norm2 = nn.LayerNorm(in_channels)
 
         # Graph Convolutional refinement layers
         self.gcn3 = GCNConv(in_channels, 2 * in_channels)
@@ -114,20 +94,12 @@ class GAT(nn.Module):
         edge_index = self._ensure_edge_index(edge_index, device)
         current_node_indices = current_node_indices.to(device).long()
 
-        # Layer 1: Multi-head GAT + Residual + LayerNorm
-        residual = x
-        h = self.gat_conv1(x, edge_index)
-        h = self.proj1(h)
-        x = self.norm1(h + residual)
+        # Base self-attention mechanism to dynamically assign weights to neighboring nodes
+        x = self.gat_conv(x, edge_index)
 
-        # Layer 2: Multi-head GAT + Residual + LayerNorm
-        residual = x
-        h = self.gat_conv2(x, edge_index)
-        h = self.proj2(h)
-        x = self.norm2(h + residual)
-
-        # Layer 3 & 4: GCN message passing
-        x = F.relu(self.gcn3(x, edge_index))
+        # GCN message passing layers
+        x = self.gcn3(x, edge_index)
+        x = F.relu(x)
         x = self.gcn4(x, edge_index)
 
         # Pairwise compatibility score matrix: (N, N)
