@@ -28,7 +28,7 @@ def create_network(edges_data):
 
 map_name='Winnipeg' # Options: SiouxFalls, Anaheim, Friedrichshain, Winnipeg
 
-datas=load_data(f'../Networks/{map_name}/{map_name}_network.csv')
+datas=load_data(f'../networks/{map_name}/{map_name}_network.csv')
 G=create_network(datas)
 tau=0.7
 G2=G
@@ -38,7 +38,7 @@ for u,v,data in edges:
         G2.remove_edge(u,v)
 
 times=100
-ods=load_data(f'../Networks/{map_name}/{map_name}_OD.csv')
+ods=load_data(f'../networks/{map_name}/{map_name}_OD.csv')
 paths=[]
 datas=[]
 
@@ -137,6 +137,6 @@ p.append(p3)
 
 output_path = pd.DataFrame(paths) if len(paths) > 0 else pd.DataFrame()
 # Ensure directory exists before saving files
-output_dir = f'../Networks/{map_name}/Benchmark_Record'
+output_dir = f'../networks/{map_name}/Benchmark_Record'
 os.makedirs(output_dir, exist_ok=True)
-output_path.to_csv(f'../Networks/{map_name}/Benchmark_Record/pi_tau.csv', index=False)
+output_path.to_csv(f'../networks/{map_name}/Benchmark_Record/pi_tau.csv', index=False)

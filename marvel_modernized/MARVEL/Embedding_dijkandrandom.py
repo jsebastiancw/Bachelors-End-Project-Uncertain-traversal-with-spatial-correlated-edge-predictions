@@ -124,17 +124,17 @@ class Node2Vec:
         self.device = device or torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
         base_dir = os.path.dirname(os.path.abspath(__file__))
-        repo_dir = os.path.dirname(base_dir)
+        repo_dir = os.path.abspath(os.path.join(base_dir, '..', '..'))
 
         self.datasets = {
             'Simple': os.path.join(base_dir, 'Roaddata', 'Simplifiedroadnet', 'Simplifiedroadnet.xlsx'),
             'Simple_2': os.path.join(base_dir, 'Roaddata', 'Simplifiedroadnet', 'Simplifiedroadnet.xlsx'),
-            'SiouxFalls': os.path.join(repo_dir, 'Networks', 'SiouxFalls', 'SiouxFalls_network.csv'),
-            'Anaheim': os.path.join(repo_dir, 'Networks', 'Anaheim', 'Anaheim_network.csv'),
-            'Barcelona': os.path.join(repo_dir, 'Networks', 'Barcelona', 'Barcelona_network.csv'),
-            'Chicago_Sketch': os.path.join(repo_dir, 'Networks', 'Chicago_Sketch', 'Chicago_Sketch_network.csv'),
-            'Museum': os.path.join(repo_dir, 'Benchmark_SOTA', 'maps', 'Museum_network.csv'),
-            'Office': os.path.join(repo_dir, 'Benchmark_SOTA', 'maps', 'Office_network.csv'),
+            'SiouxFalls': os.path.join(repo_dir, 'networks', 'SiouxFalls', 'SiouxFalls_network.csv'),
+            'Anaheim': os.path.join(repo_dir, 'networks', 'Anaheim', 'Anaheim_network.csv'),
+            'Barcelona': os.path.join(repo_dir, 'networks', 'Barcelona', 'Barcelona_network.csv'),
+            'Chicago_Sketch': os.path.join(repo_dir, 'networks', 'Chicago_Sketch', 'Chicago_Sketch_network.csv'),
+            'Museum': os.path.join(repo_dir, 'networks', 'maps', 'Museum_network.csv'),
+            'Office': os.path.join(repo_dir, 'networks', 'maps', 'Office_network.csv'),
         }
         self.G = self.load_graph()
 

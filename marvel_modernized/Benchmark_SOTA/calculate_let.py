@@ -9,8 +9,8 @@ if __name__ == '__main__':
     curr_dir = os.getcwd()
 
     # Define file paths
-    net_file_path = os.path.join(os.path.dirname(curr_dir), f'Networks\\{net_name}\\{net_name}_network.csv')
-    drl_file_path = os.path.join(os.path.dirname(curr_dir), f'Networks\\{net_name}\\csv\\{net_name}_DRL.csv')
+    net_file_path = os.path.join(os.path.dirname(os.path.dirname(curr_dir)), f'networks\\{net_name}\\{net_name}_network.csv')
+    drl_file_path = os.path.join(os.path.dirname(os.path.dirname(curr_dir)), f'networks\\{net_name}\\csv\\{net_name}_DRL.csv')
 
     # Detect encoding of the net_file
     with open(net_file_path, 'rb') as file:

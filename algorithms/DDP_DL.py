@@ -275,7 +275,7 @@ def update_traversal(traversalGraph, stateActionsCell, destinationNode, nodeNum)
 if __name__ == "__main__":
     # Load graph data from a CSV file
     map_name = 'Anaheim'  # Options: SiouxFalls, Anaheim, Friedrichshain, Winnipeg
-    network_file = f'../Networks/{map_name}/{map_name}_network.csv'
+    network_file = f'../networks/{map_name}/{map_name}_network.csv'
     df = pd.read_csv(network_file)
 
     # Initialize graph matrices
@@ -293,11 +293,11 @@ if __name__ == "__main__":
         traversalGraph[start, end] = row['prob']
 
     # Load OD pairs from a CSV file
-    od_pairs_file = f'../Networks/{map_name}/{map_name}_OD.csv'  # Modify with actual file path
+    od_pairs_file = f'../networks/{map_name}/{map_name}_OD.csv'  # Modify with actual file path
     od_pairs_df = pd.read_csv(od_pairs_file)
 
     # Create a folder to store the paths
-    output_folder = f'../Networks/{map_name}/Benchmark_Record'
+    output_folder = f'../networks/{map_name}/Benchmark_Record'
     os.makedirs(output_folder, exist_ok=True)
     output_file = os.path.join(output_folder, 'DDP_DL.txt')
 

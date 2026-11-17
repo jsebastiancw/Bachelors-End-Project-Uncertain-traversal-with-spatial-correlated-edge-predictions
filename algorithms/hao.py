@@ -25,7 +25,8 @@ class Network:
 
     # Initial the network by the CSV data
     def get_init(self, nu=0.4):
-        file_net_path = os.path.dirname(os.getcwd()) + f'/Networks/{self.name}/{self.name}_network.csv'
+        repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+        file_net_path = f'{repo_root}/networks/{self.name}/{self.name}_network.csv'
         net_data = pd.read_csv(file_net_path).values
         if len(net_data) != self.edge_num:
             print('Edge number is NOT equal to the lenth of Data !!!!!!!!!!!')
@@ -38,7 +39,7 @@ class Network:
                 self.index[i] = [int(net_data[i][0]) - bias, int(net_data[i][1]) - bias]
             self.distrib[:, 0] = net_data[:, 3]
             # Sigma is generated randomly based on the NU
-            file_sigma = os.path.dirname(os.getcwd()) + f'/Networks/{self.name}/{self.name}_{nu}_random_sigma.npy'
+            file_sigma = f'{repo_root}/networks/{self.name}/{self.name}_{nu}_random_sigma.npy'
             if os.path.exists(file_sigma):
                 sigma = np.load(file_sigma)
                 print('Sigma file exists!')
@@ -48,7 +49,7 @@ class Network:
                 np.save(file_sigma, sigma)
             self.distrib[:, 1] = sigma
         # Test OD pairs load by CSV data
-        file_od_path = os.path.dirname(os.getcwd()) + f'/Networks/{self.name}/{self.name}_OD.csv'
+        file_od_path = f'{repo_root}/networks/{self.name}/{self.name}_OD.csv'
         od_data = pd.read_csv(file_od_path).values
         self.test_od = od_data[:, 1:3].astype(int).tolist()
 
@@ -167,7 +168,8 @@ class PQL():
 
 
     def _get_test(self, network, policy, origin, destination, Time, epoch):
-        file_observ = os.path.dirname(os.getcwd()) + f'\\Networks\\{network.name}\\{network.name}_{epoch}_random_observation.csv'
+        repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+        file_observ = f'{repo_root}\\networks\\{network.name}\\{network.name}_{epoch}_random_observation.csv'
         observ_epoch = np.loadtxt(file_observ, delimiter=",")
         count = 0
         start = systime.perf_counter()

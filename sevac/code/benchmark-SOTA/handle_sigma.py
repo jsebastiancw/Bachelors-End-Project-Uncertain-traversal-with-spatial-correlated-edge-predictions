@@ -7,8 +7,9 @@ if __name__ == '__main__':
     curr_dir = os.getcwd()
 
     # 定义文件路径
-    sigma_file = os.path.join(os.path.dirname(curr_dir), f'Networks\\{net_name}\\{net_name}_0.4_random_sigma.npy')
-    net_file = os.path.join(os.path.dirname(curr_dir), f'Networks\\{net_name}\\{net_name}_network.csv')
+    repo_root = os.path.abspath(os.path.join(curr_dir, '..', '..', '..'))
+    sigma_file = os.path.join(repo_root, f'networks\\{net_name}\\{net_name}_0.4_random_sigma.npy')
+    net_file = os.path.join(repo_root, f'networks\\{net_name}\\{net_name}_network.csv')
 
 
     # 你的数组

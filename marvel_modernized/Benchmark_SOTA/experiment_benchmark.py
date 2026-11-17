@@ -1,16 +1,19 @@
-from CTD import Trainer, CTD
-from utils.func import MapInfo
-from utils.cutom_env import *
-import func
 import os
-# from PQL import QL
-from GP3 import *
+import sys
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
+
+from algorithms.CTD import Trainer, CTD
+from algorithms.utils.func import MapInfo
+from algorithms.utils.cutom_env import *
+from algorithms import func
+# from algorithms.PQL import QL
+from algorithms.GP3 import *
 from copy import deepcopy
 import time
-# from ActorCritic import ActorCritic
+# from algorithms.ActorCritic import ActorCritic
 import datetime
 import numpy as np
-from hao import *
+from algorithms.hao import *
 
 
 def write_file(content_name, content, file_name):
@@ -50,7 +53,7 @@ if __name__ == '__main__':
         t = datetime.datetime.now()
         curr_dir = os.getcwd()
         file_name = os.path.dirname(
-            curr_dir) + f'/Networks/{net}/Benchmark_Record/{t.month}_{t.day}_{t.hour}_bm1.txt'
+            os.path.dirname(curr_dir)) + f'/networks/{net}/Benchmark_Record/{t.month}_{t.day}_{t.hour}_bm1.txt'
         sub_results = {"PQL":[]}
         # sub_results = {"GP3":[], "PQL":[], "CTD":[]}
 

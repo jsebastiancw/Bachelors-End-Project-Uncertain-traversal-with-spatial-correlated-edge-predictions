@@ -3,7 +3,7 @@ import numpy as np
 from concurrent.futures import ThreadPoolExecutor
 
 map_name = 'Simple'  # Options: SiouxFalls, Anaheim, Friedrichshain, Winnipeg
-file_path = f'../Networks/{map_name}/{map_name}_network.csv'  # 请替换成你的文件路径
+file_path = f'../../networks/{map_name}/{map_name}_network.csv'  # 请替换成你的文件路径
 df = pd.read_csv(file_path)
 
 # 提取相关列

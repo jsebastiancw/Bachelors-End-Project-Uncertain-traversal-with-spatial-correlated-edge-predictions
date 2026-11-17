@@ -208,8 +208,8 @@ def SEVAC(G, iterations, alpha, start, end, time_budget, shortest_path, device=N
 
 def compare(network, iteration, alpha, device=None):
     target_device = device if device is not None else DEVICE
-    file_path = resolve_data_path(f'Networks/{network}/{network}_network.csv')
-    od_path = resolve_data_path(f'Networks/{network}/{network}_OD.csv')
+    file_path = resolve_data_path(f'../networks/{network}/{network}_network.csv')
+    od_path = resolve_data_path(f'../networks/{network}/{network}_OD.csv')
 
     data = load_data(file_path)
     G = create_network(data)
@@ -333,7 +333,7 @@ def compare(network, iteration, alpha, device=None):
     probs3 = pd.DataFrame(probs_off_policy_VPG)
     probs4 = pd.DataFrame(probs_SEVAC)
 
-    out_dir = os.path.join('Networks', network, 'csv')
+    out_dir = os.path.join('..', 'networks', network, 'csv')
     os.makedirs(out_dir, exist_ok=True)
 
     output1.to_csv(os.path.join(out_dir, f'{network}_VPG.csv'), index=False)

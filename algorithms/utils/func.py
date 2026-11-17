@@ -5,8 +5,8 @@ import os
 
 
 def gen_M(net):
-    prefix = os.path.dirname(os.getcwd())
-    file_path = prefix + f'\\Networks\\{net}\\{net}_network.csv'
+    prefix = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+    file_path = prefix + f'\\networks\\{net}\\{net}_network.csv'
     # file_path = prefix + f'/nn/{net}/{net}_network.csv'
     raw_data = pd.read_csv(file_path)
     origins = raw_data['From']
@@ -23,7 +23,7 @@ def gen_M(net):
         M[destinations[i] - 1, i] = -1
     mu = np.array(raw_data['Cost']).reshape(-1, 1)
     nu = 0.4
-    file_sigma = prefix + f'/Networks/{net}/{net}_{nu}_random_sigma.npy'
+    file_sigma = prefix + f'/networks/{net}/{net}_{nu}_random_sigma.npy'
     if os.path.exists(file_sigma):
         sigma = np.load(file_sigma).reshape(-1, 1)
         print('Sigma文件已存在！')

@@ -28,7 +28,8 @@ class FMA_MAP(Map):
     def gen_var(self, nu):
         mu = self.mu.reshape(-1)
         
-        file_sigma = os.path.dirname(os.getcwd()) + f'/Networks/{self.mapname}/{self.mapname}_{nu}_random_sigma.npy'
+        repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+        file_sigma = os.path.join(repo_root, 'networks', self.mapname, f'{self.mapname}_{nu}_random_sigma.npy')
         if os.path.exists(file_sigma):
             sigma = np.load(file_sigma)
             print('Sigma文件已存在！')

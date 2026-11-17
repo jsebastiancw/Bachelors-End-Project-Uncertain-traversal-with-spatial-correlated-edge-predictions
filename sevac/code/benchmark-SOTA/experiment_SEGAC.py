@@ -1,13 +1,16 @@
+import os
+import sys
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..')))
+
 import torch
 import EVFA
-import GPG
-from utils.cutom_env import *
-from trainer import GeneralizedAC
+from algorithms import GPG
+from algorithms.utils.cutom_env import *
+from algorithms.trainer import GeneralizedAC
 from tqdm import tqdm
-import func
-from func import Map, record, write_file
-import os
-# from fma import FMA_MAP, FMA, LET_path
+from algorithms import func
+from algorithms.func import Map, record, write_file
+# from algorithms.fma import FMA_MAP, FMA, LET_path
 import time
 
 

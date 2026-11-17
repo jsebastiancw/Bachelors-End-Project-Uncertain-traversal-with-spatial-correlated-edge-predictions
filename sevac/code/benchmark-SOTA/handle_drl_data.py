@@ -8,8 +8,9 @@ def handle_data(net_name):
     curr_dir = os.getcwd()
 
     # 定义文件路径
-    dot_file = os.path.join(os.path.dirname(curr_dir), f'Networks\\{net_name}\\csv\\{net_name}_DOT.csv')
-    drl_file = os.path.join(os.path.dirname(curr_dir), f'Networks\\{net_name}\\csv\\{net_name}_DRL.csv')
+    repo_root = os.path.abspath(os.path.join(curr_dir, '..', '..', '..'))
+    dot_file = os.path.join(repo_root, f'networks\\{net_name}\\csv\\{net_name}_DOT.csv')
+    drl_file = os.path.join(repo_root, f'networks\\{net_name}\\csv\\{net_name}_DRL.csv')
 
     # 读取 file1 和 file2
     file1 = pd.read_csv(dot_file)

@@ -8,7 +8,7 @@ def write_data(net_name):
     curr_dir = os.getcwd()
 
     # 定义文件路径
-    res_file = os.path.join(os.path.dirname(curr_dir), f'Networks\\{net_name}\\{net_name}_network.csv')
+    res_file = os.path.join(os.path.dirname(os.path.dirname(curr_dir)), f'networks\\{net_name}\\{net_name}_network.csv')
 
     # 读取CSV文件
     df = pd.read_csv(res_file)

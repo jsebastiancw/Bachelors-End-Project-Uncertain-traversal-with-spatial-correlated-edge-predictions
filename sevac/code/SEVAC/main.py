@@ -23,8 +23,8 @@ def main(prefer_cuda: bool = True):
     compare(network, iterations, alpha, device=device)
 
     # Other standalone entry points from original code:
-    # file_path = 'Networks/Winnipeg/Winnipeg_network.csv'
-    # target_path = 'Networks/Winnipeg/Winnipeg_network.csv'
+    # file_path = '../networks/Winnipeg/Winnipeg_network.csv'
+    # target_path = '../networks/Winnipeg/Winnipeg_network.csv'
     # draw('output_data/arrays_data_T=10.json')
     # generate_all(file_path, target_path, 0.1)
 

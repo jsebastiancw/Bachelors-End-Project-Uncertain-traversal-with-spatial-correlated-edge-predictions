@@ -15,8 +15,8 @@ def read_data(net_name, alg_name):
     curr_dir = os.getcwd()
 
     # 定义文件路径
-    net_file = os.path.join(os.path.dirname(curr_dir), f'Networks\\{net_name}\\{net_name}_network.csv')
-    res_file = os.path.join(os.path.dirname(curr_dir), f'Networks\\{net_name}\\csv\\{net_name}_{alg_name}.csv')
+    net_file = os.path.join(os.path.dirname(os.path.dirname(curr_dir)), f'networks\\{net_name}\\{net_name}_network.csv')
+    res_file = os.path.join(os.path.dirname(os.path.dirname(curr_dir)), f'networks\\{net_name}\\csv\\{net_name}_{alg_name}.csv')
 
     # 初始化数组
     edges = []
@@ -142,7 +142,7 @@ def load_sigma(net_name):
     curr_dir = os.getcwd()
 
     # 定义文件路径
-    net_file = os.path.join(os.path.dirname(curr_dir), f'Networks\\{net_name}\\{net_name}_0.4_random_sigma.npy')
+    net_file = os.path.join(os.path.dirname(os.path.dirname(curr_dir)), f'networks\\{net_name}\\{net_name}_0.4_random_sigma.npy')
 
     # 使用 np.load() 加载 .npy 文件
     loaded_data = np.load(net_file)
@@ -160,7 +160,7 @@ def write_data(net_name, alg_name, sota):
     curr_dir = os.getcwd()
 
     # 定义文件路径
-    res_file = os.path.join(os.path.dirname(curr_dir), f'Networks\\{net_name}\\csv\\{net_name}_{alg_name}.csv')
+    res_file = os.path.join(os.path.dirname(os.path.dirname(curr_dir)), f'networks\\{net_name}\\csv\\{net_name}_{alg_name}.csv')
 
     # 读取CSV文件
     df = pd.read_csv(res_file)
@@ -183,8 +183,8 @@ def prob_mean(net_name, alg_name):
     curr_dir = os.getcwd()
 
     # 定义文件路径
-    res_file = os.path.join(os.path.dirname(curr_dir), f'Networks\\{net_name}\\csv\\{net_name}_{alg_name}.csv')
-    mean_file = os.path.join(os.path.dirname(curr_dir), f'Networks\\{net_name}\\csv\\{net_name}_{alg_name}_mean_prob.csv')
+    res_file = os.path.join(os.path.dirname(os.path.dirname(curr_dir)), f'networks\\{net_name}\\csv\\{net_name}_{alg_name}.csv')
+    mean_file = os.path.join(os.path.dirname(os.path.dirname(curr_dir)), f'networks\\{net_name}\\csv\\{net_name}_{alg_name}_mean_prob.csv')
 
     # 初始化数组
     tf_arr = []

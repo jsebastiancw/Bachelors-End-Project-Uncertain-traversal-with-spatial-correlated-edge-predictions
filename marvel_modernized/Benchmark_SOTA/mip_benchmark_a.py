@@ -1,16 +1,19 @@
-import numpy as np
-import func
-import time
 import os
+import sys
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
+
+import numpy as np
+from algorithms import func
+import time
 from copy import deepcopy
-from func import Map, record, write_file
+from algorithms.func import Map, record, write_file
 from benchmark import other_iterations
-from evaluation import calc_path_prob
-from GP4 import GP4_iterations
-from cao import ILP, PLM
-from prakash import DOT
-from yang import MIP_LR, MIP_CPLEX
-from fma import FMA_MAP, FMA, LET_path
+from algorithms.evaluation import calc_path_prob
+from algorithms.GP4 import GP4_iterations
+from algorithms.cao import ILP, PLM
+from algorithms.prakash import DOT
+from algorithms.yang import MIP_LR, MIP_CPLEX
+from algorithms.fma import FMA_MAP, FMA, LET_path
 import math
 import datetime
 
@@ -65,7 +68,7 @@ for map_idx in range(0, len(map_list)):
 
     curr_dir = os.getcwd()
     t = datetime.datetime.now()
-    file_name = os.path.dirname(curr_dir) + f'\\Networks\\{net}\\Benchmark_Record\\OS-MIP_{t.month}_{t.day}_{t.hour}_21_24_bm2.txt'
+    file_name = os.path.dirname(os.path.dirname(curr_dir)) + f'\\networks\\{net}\\Benchmark_Record\\OS-MIP_{t.month}_{t.day}_{t.hour}_21_24_bm2.txt'
 
     file_list = [file_name]
     fp = open(file_name, 'a+')

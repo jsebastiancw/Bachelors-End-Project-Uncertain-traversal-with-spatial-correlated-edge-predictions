@@ -1,9 +1,13 @@
+import os
+import sys
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
+
 import numpy as np
-import func
+from algorithms import func
 import time
-from evaluation import calc_path_prob
+from algorithms.evaluation import calc_path_prob
 from scipy.stats import norm
-from fma import calc_path_g
+from algorithms.fma import calc_path_g
 
 def DOT(mymap, T, delta=1):
     n_timestamp = np.ceil(T/delta).astype(int)

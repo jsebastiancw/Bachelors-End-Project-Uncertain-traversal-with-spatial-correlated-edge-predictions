@@ -1,6 +1,7 @@
 import pandas as pd
 import numpy as np
 import networkx as nx
+import os
 
 class Node:
     def __init__(self, index, parent, nodeId, prob, children, node_type, state, f, status):
@@ -51,24 +52,20 @@ def update_action_list(traversalGraph):
 def expand_children(node, assumptMuGraph, assumptTraversalGraph):
     childrenNodes = []
     parentType = 0
-    print(f"Expanding children for node: {node.index}, nodeId: {node.nodeId}")
     for i in range(len(assumptTraversalGraph)):
         if 0 < assumptTraversalGraph[node.state.nodeId, i] < 1:
             # Add negative edge child
             childNode_neg = Node(None, node.index, i, 1 - assumptTraversalGraph[node.state.nodeId, i], [], None, State(i, node.state.actionStatusList.copy()), None, False)
             childrenNodes.append(childNode_neg)
-            print(f"Generated negative edge child: nodeId: {childNode_neg.nodeId}")
 
             # Add positive edge child
             childNode_pos = Node(None, node.index, i, assumptTraversalGraph[node.state.nodeId, i], [], None, State(i, node.state.actionStatusList.copy()), None, False)
             childrenNodes.append(childNode_pos)
-            print(f"Generated positive edge child: nodeId: {childNode_pos.nodeId}")
 
             parentType = 1
         elif assumptTraversalGraph[node.state.nodeId, i] == 1:
             childNode = Node(None, node.index, i, 1, [], None, State(i, node.state.actionStatusList.copy()), None, False)
             childrenNodes.append(childNode)
-            print(f"Generated child for confirmed edge: nodeId: {childNode.nodeId}")
 
             parentType = 0
     return childrenNodes, parentType
@@ -78,14 +75,12 @@ def add_child_to_tree(childNode, parentIndex, parentType, AOtree):
     AOtree.append(childNode)
     AOtree[parentIndex].children.append(childNode.index)
     AOtree[parentIndex].type = parentType
-    print(f"Added child to tree: {childNode.index}, parentIndex: {parentIndex}, parentType: {parentType}")
     return AOtree
 
 def backpropagate(node, AOtree, omega, assumptMuGraph):
     if not node.children:
         return AOtree
     while node.index is not None:
-        print(f"Backpropagating for node {node.index}")
         if AOtree[node.index].type == 0:
             minf = float('inf')
             for childIndex in AOtree[node.index].children:
@@ -93,7 +88,6 @@ def backpropagate(node, AOtree, omega, assumptMuGraph):
                 if AOtree[childIndex].f < minf:
                     minf = AOtree[childIndex].f + assumptMuGraph[AOtree[node.index].state.nodeId, AOtree[childIndex].state.nodeId]
             AOtree[node.index].f = minf
-            print(f"Updated node {node.index} f to {AOtree[node.index].f}")
         elif AOtree[node.index].type == 1:
             valueExp = 0
             status = True
@@ -102,7 +96,6 @@ def backpropagate(node, AOtree, omega, assumptMuGraph):
                 valueExp += AOtree[childIndex].prob * np.exp(omega * (AOtree[childIndex].f + assumptMuGraph[AOtree[node.index].state.nodeId, AOtree[childIndex].state.nodeId]))
             AOtree[node.index].status = status
             AOtree[node.index].f = (1 / omega) * np.log(valueExp)
-            print(f"Updated node {node.index} f to {AOtree[node.index].f}")
         node.index = AOtree[node.index].parent
     return AOtree
 
@@ -113,7 +106,6 @@ def select_min_cost_node(AOtree):
         if not node.status and node.f < minf:
             minf = node.f
             nextNodeIndex = i
-    print(f"Selected next node with minimum cost: {nextNodeIndex}, f: {minf}")
     return AOtree[nextNodeIndex]
 
 def output_path(AOtree, root, destinationNode):
@@ -125,25 +117,19 @@ def output_path(AOtree, root, destinationNode):
                 path.append(AOtree[childIndex].state.nodeId)
                 nodeIndex = childIndex
                 break
-    print(f"Output path: {path}")
     return path
 
-def RAO_star(muGraph, sigmaGraph, traversalGraph, currentState, destinationNode, synchronous):
+def RAO_star(muGraph, sigmaGraph, traversalGraph, currentState, destinationNode, synchronous, all_nodes):
     global path
     path = []
 
-    print(f"Starting RAO_star: currentState={currentState}, destinationNode={destinationNode}, synchronous={synchronous}")
-
     if currentState == destinationNode:
-        print("The current node is the destination node.")
         return [destinationNode]
 
     if synchronous == 2:
-        print("Synchronous mode 2 is not supported.")
         return [currentState]
 
     if synchronous == 1 and path:
-        print("Synchronous mode 1 is not supported.")
         id = path.index(currentState)
         if traversalGraph[currentState][path[id + 1]] == 1:
             return path[id + 1]
@@ -164,63 +150,43 @@ def RAO_star(muGraph, sigmaGraph, traversalGraph, currentState, destinationNode,
     node = root
 
     while not AOtree[0].status and AOtree[0].f != float('inf'):
-        print(f"AOtree size: {len(AOtree)}, current node: {node.index}")
         if len(AOtree) > 10000:
-            print("AOtree exceeded 1000 nodes, returning current state.")
             return [currentState]
         node = select_min_cost_node(AOtree)
-        print(f"Selected node with minimum cost: {node.index}, nodeId: {node.nodeId}")
 
         assumptMuGraph, assumptTraversalGraph = calculate_assumpt_graph(node.state.actionStatusList, muGraph, traversalGraph)
         childrenList, parentType = expand_children(node, assumptMuGraph, assumptTraversalGraph)
-        if not childrenList:
-            print("No children generated for node:", node.index)
         for childNode in childrenList:
             assumptMuGraph, assumptTraversalGraph = calculate_assumpt_graph(childNode.state.actionStatusList, muGraph, traversalGraph)
             childNode.f = heuristic_function(childNode.state.nodeId, assumptMuGraph, destinationNode)
             if childNode.state.nodeId == destinationNode:
                 childNode.status = True
             AOtree = add_child_to_tree(childNode, node.index, parentType, AOtree)
-            print(f"Added child node: {childNode.index}, nodeId: {childNode.nodeId}, f: {childNode.f}")
 
         if node.nodeId == destinationNode:
-            print("Reached the destination node.")
             break
 
-        node = select_min_cost_node(AOtree)  # Ensure we are selecting the next node with the minimum cost
-        print(f"Moving to next node: {node.index}, nodeId: {node.nodeId}")
+        node = select_min_cost_node(AOtree)
 
         assumptMuGraph, assumptTraversalGraph = calculate_assumpt_graph(node.state.actionStatusList, muGraph, traversalGraph)
         AOtree = backpropagate(node, AOtree, omega, assumptMuGraph)
-        print(f"Backpropagated values updated for node {node.index}")
 
-    path = output_path(AOtree, root, destinationNode)
-    print(f"Completed RAO_star: path={path}")
+    path = [all_nodes[node] for node in output_path(AOtree, root, destinationNode)]
     return path
 
-def sample_travel_time(path, muGraph, sigmaGraph):
-    total_time = 0
-    print(f"Sampling travel time for path: {path}")
-    for i in range(len(path) - 1):
-        start = path[i]
-        end = path[i + 1]
-        mu = muGraph[start, end]
-        sigma = sigmaGraph[start, end]
-        sample_time = np.random.normal(mu, sigma)
-        total_time += max(sample_time, 0)  # 只取非负部分
-        print(f"Segment from {start} to {end}: mu={mu}, sigma={sigma}, sample_time={sample_time}, total_time={total_time}")
-    return total_time
-
 def main():
+    # 地图名称，可修改以更改文件路径
+    map_name = 'SiouxFalls'
+
     # 读取CSV文件中的数据
-    file_path = './Networks/Friedrichshain/Friedrichshain_network.csv'
+    file_path = f'../networks/{map_name}/{map_name}_network.csv'
     data = pd.read_csv(file_path)
 
     # 提取 'From', 'To', 'Cost' 和 'sigma' 列
     from_nodes = data['From'].values
     to_nodes = data['To'].values
     weights = data['Cost'].values
-    sigmas = data['sigma'].values
+    sigmas = data['Sigma'].values
 
     # 获取所有节点并创建图的邻接矩阵
     all_nodes = np.unique(np.concatenate((from_nodes, to_nodes)))
@@ -236,36 +202,33 @@ def main():
         sigmaGraph[node_index[from_node], node_index[to_node]] = sigma
         traversalGraph[node_index[from_node], node_index[to_node]] = 1  # 假设遍历图为二进制
 
-    # 定义其他参数
-    maxtime =85.66321
+    # 读取OD对的CSV文件
+    od_file_path = f'../networks/{map_name}/{map_name}_OD.csv'  # 应该指向OD对的CSV文件
+    od_data = pd.read_csv(od_file_path)
 
+    # 获取路由的OD对
+    origins = od_data['O'].values
+    destinations = od_data['D'].values
 
-# 最大时间阈值
-    num_trials = 5000  # 试验次数
+    # 打开文件存储路径
+    record_folder = f'../networks/{map_name}/Benchmark_Record'
+    os.makedirs(record_folder, exist_ok=True)
+    record_file_path = os.path.join(record_folder, 'RAO_Star.txt')
 
-    # 示例输入的 OD 对
-    origin = 139
-    destination = 114
+    with open(record_file_path, 'w') as f:
+        # 对每一对OD进行运行
+        for origin, destination in zip(origins, destinations):
+            if origin in node_index and destination in node_index:
+                currentState = node_index[origin]
+                destinationNode = node_index[destination]
+                synchronous = 0
 
-    if origin in node_index and destination in node_index:
-        currentState = node_index[origin]
-        destinationNode = node_index[destination]
-        synchronous = 0
-
-        path = RAO_star(muGraph, sigmaGraph, traversalGraph, currentState, destinationNode, synchronous)
-        print(f"Path: {path}")
-
-        successes = 0
-        for _ in range(num_trials):
-            travel_time = sample_travel_time(path, muGraph, sigmaGraph)
-            print(f"Travel time: {travel_time:.2f}")
-            if travel_time <= maxtime:
-                successes += 1
-
-        success_rate = successes / num_trials
-        print(f"Success rate: {success_rate:.2%}")
-    else:
-        print(f"OD pair ({origin}, {destination}) is out of node index range.")
+                path = RAO_star(muGraph, sigmaGraph, traversalGraph, currentState, destinationNode, synchronous, all_nodes)
+                f.write(f"Path from {origin} to {destination}: {path}\n")
+                print(f"Path from {origin} to {destination}: {path}")
+            else:
+                f.write(f"OD pair ({origin}, {destination}) is out of node index range.\n")
+                print(f"OD pair ({origin}, {destination}) is out of node index range.")
 
 if __name__ == "__main__":
     main()

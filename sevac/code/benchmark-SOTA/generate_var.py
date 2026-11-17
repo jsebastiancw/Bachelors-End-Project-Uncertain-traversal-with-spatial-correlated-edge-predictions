@@ -1,8 +1,11 @@
-import numpy as np
-import func
-import time
 import os
-from fma import FMA_MAP, FMA, LET_path
+import sys
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..')))
+
+import numpy as np
+from algorithms import func
+import time
+from algorithms.fma import FMA_MAP, FMA, LET_path
 import csv
 
 

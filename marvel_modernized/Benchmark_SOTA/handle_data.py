@@ -30,7 +30,7 @@ def handle_dot_data(net_name, txt_name):
 
     # 数据文件名
     curr_dir = os.getcwd()
-    filename = os.path.join(os.path.dirname(curr_dir), f'Networks\\{net_name}\\csv\\{net_name}_DOT.csv')
+    filename = os.path.join(os.path.dirname(os.path.dirname(curr_dir)), f'networks\\{net_name}\\csv\\{net_name}_DOT.csv')
 
     # 表头
     header = ['od', 'tf', 'let', 'prob', 'path']
@@ -80,7 +80,7 @@ def handle_fma_data(net_name, txt_name):
 
     # 数据文件名
     curr_dir = os.getcwd()
-    filename = os.path.join(os.path.dirname(curr_dir), f'Networks\\{net_name}\\csv\\{net_name}_FMA.csv')
+    filename = os.path.join(os.path.dirname(os.path.dirname(curr_dir)), f'networks\\{net_name}\\csv\\{net_name}_FMA.csv')
 
     # 表头
     header = ['od', 'tf', 'let', 'prob', 'path']
@@ -132,7 +132,7 @@ def handle_MLR_data(net_name, txt_name):
 
     # 数据文件名
     curr_dir = os.getcwd()
-    filename = os.path.join(os.path.dirname(curr_dir), f'Networks\\{net_name}\\csv\\{net_name}_OS-MIP.csv')
+    filename = os.path.join(os.path.dirname(os.path.dirname(curr_dir)), f'networks\\{net_name}\\csv\\{net_name}_OS-MIP.csv')
 
     # 表头
     header = ['od', 'tf', 'let', 'prob', 'path']
@@ -180,7 +180,7 @@ def handle_PQL_data(net_name, txt_name):
 
     # 数据文件名
     curr_dir = os.getcwd()
-    filename = os.path.join(os.path.dirname(curr_dir), f'Networks\\{net_name}\\csv\\{net_name}_PQL.csv')
+    filename = os.path.join(os.path.dirname(os.path.dirname(curr_dir)), f'networks\\{net_name}\\csv\\{net_name}_PQL.csv')
 
     # 表头
     header = ['od', 'tf', 'let', 'prob', 'path']
@@ -235,7 +235,7 @@ if __name__ == '__main__':
     # txt_name = os.path.join(os.path.dirname(curr_dir), f'Networks\\{net_name}\\Benchmark_Record\\OS-MIP.txt')
 
     net_name = 'Winnipeg'
-    txt_name = os.path.join(os.path.dirname(curr_dir), f'Networks\\{net_name}\\Benchmark_Record\\OS-MIP.txt')
+    txt_name = os.path.join(os.path.dirname(os.path.dirname(curr_dir)), f'networks\\{net_name}\\Benchmark_Record\\OS-MIP.txt')
 
     handle_MLR_data(net_name, txt_name)
 

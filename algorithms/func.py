@@ -628,8 +628,8 @@ def generate_OD_pairs(mymap, n_pair):
     return OD_pairs
 	
 def extract_map(net):
-    prefix = os.path.dirname(os.getcwd())
-    file_path = prefix + f'/Networks/{net}/{net}_network.csv'
+    prefix = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+    file_path = f'{prefix}/networks/{net}/{net}_network.csv'
     raw_map_data = pd.read_csv(file_path)
 
     origins = raw_map_data['From']
@@ -657,8 +657,8 @@ def extract_map(net):
     return M, mu, cov#, var
 
 def extract_OD(net):
-    prefix = os.path.dirname(os.getcwd())
-    file_path = prefix + f'/Networks/{net}/{net}_OD.csv'
+    prefix = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+    file_path = f'{prefix}/networks/{net}/{net}_OD.csv'
     OD_pairs = np.array(pd.read_csv(file_path, usecols=['O','D'])).tolist()
     return OD_pairs
 
