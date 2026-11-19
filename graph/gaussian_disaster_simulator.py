@@ -243,40 +243,77 @@ def inverse_logistic_cost_mapping(q, k_steepness=0.6, y_offset=1.5):
 # 3. Disaster Topology Router & Anchor Builder
 # ==========================================
 
-def _get_origin_and_destination_coords(G):
+def _resolve_od_pairs(G, od_pairs=None):
     """
-    Extracts the 2D coordinates of the Origin (O) and Destination (D) nodes in G.
+    Resolves the active list of (O_k, D_k) pairs for single- or multi-agent routing.
+    Priority:
+      1. Explicit `od_pairs` argument if provided.
+      2. `G.graph["od_pairs"]` if populated by `sample_od_pairs`.
+      3. `[(G.graph["origin"], G.graph["destination"])]` if present.
+      4. Node attributes `is_origin` / `is_destination` (falling back to min/max node IDs).
     """
-    pos = nx.get_node_attributes(G, 'pos')
+    if od_pairs is not None and len(od_pairs) > 0:
+        return [(int(o), int(d)) for o, d in od_pairs]
+
+    graph_pairs = G.graph.get('od_pairs')
+    if graph_pairs and len(graph_pairs) > 0:
+        return [(int(o), int(d)) for o, d in graph_pairs]
+
+    if 'origin' in G.graph and 'destination' in G.graph:
+        return [(int(G.graph['origin']), int(G.graph['destination']))]
+
     nodes = list(G.nodes())
     origins = [n for n, d in G.nodes(data=True) if d.get('is_origin', False)]
     destinations = [n for n, d in G.nodes(data=True) if d.get('is_destination', False)]
 
-    origin_node = origins[0] if origins else min(nodes)
-    dest_node = destinations[0] if destinations else max(nodes)
+    if origins and destinations and len(origins) == len(destinations):
+        origins_sorted = sorted(origins, key=lambda n: (G.nodes[n].get('origin_agent_idx') is None, G.nodes[n].get('origin_agent_idx', 0)))
+        dests_sorted = sorted(destinations, key=lambda n: (G.nodes[n].get('destination_agent_idx') is None, G.nodes[n].get('destination_agent_idx', 0)))
+        return [(int(o), int(d)) for o, d in zip(origins_sorted, dests_sorted)]
+
+    origin_node = int(origins[0]) if origins else int(min(nodes))
+    dest_node = int(destinations[0]) if destinations else int(max(nodes))
+    return [(origin_node, dest_node)]
+
+
+def _get_origin_and_destination_coords(G):
+    """
+    Extracts the 2D coordinates of the primary Origin (O_1) and Destination (D_1) nodes in G.
+    """
+    pos = nx.get_node_attributes(G, 'pos')
+    pairs = _resolve_od_pairs(G)
+    origin_node, dest_node = pairs[0]
 
     o_coord = np.asarray(pos[origin_node], dtype=float)
     d_coord = np.asarray(pos[dest_node], dtype=float)
     return origin_node, dest_node, o_coord, d_coord
 
 
-def _extract_safe_guardian_anchors(G, safe_y=-3.0, ring_radius=0.05):
+def _extract_safe_guardian_anchors(G, safe_y=-3.0, ring_radius=0.05, od_pairs=None):
     """
-    Constructs safe-zone anchor coordinates at the Origin and Destination nodes
-    (along with a tight local ring of guardian points around O and D) pinned at
+    Constructs safe-zone anchor coordinates at all active Origin and Destination nodes
+    (along with a tight local ring of guardian points around each O_k and D_k) pinned at
     latent intensity y = -3.0 (and below) so the posterior math guarantees ~0%
-    blockage probability at the agent's spawn and goal.
+    blockage probability at every agent's spawn and goal.
     """
-    _, _, o_coord, d_coord = _get_origin_and_destination_coords(G)
+    pos = nx.get_node_attributes(G, 'pos')
+    pairs = _resolve_od_pairs(G, od_pairs=od_pairs)
 
-    # Pin O and D centers and 4 cardinal points immediately around O and D
     angles = np.linspace(0.0, 2.0 * np.pi, 4, endpoint=False)
     offsets = np.column_stack([ring_radius * np.cos(angles), ring_radius * np.sin(angles)])
 
-    o_ring = np.clip(o_coord + offsets, 0.0, 1.0)
-    d_ring = np.clip(d_coord + offsets, 0.0, 1.0)
+    center_list = []
+    ring_list = []
+    seen_nodes = set()
+    for o_node, d_node in pairs:
+        for n in (o_node, d_node):
+            if n not in seen_nodes:
+                seen_nodes.add(n)
+                c = np.asarray(pos[n], dtype=float)
+                center_list.append(c)
+                ring_list.append(np.clip(c + offsets, 0.0, 1.0))
 
-    safe_coords = np.vstack([o_coord, d_coord, o_ring, d_ring])
+    safe_coords = np.vstack(center_list + ring_list)
     safe_values = np.full(safe_coords.shape[0], safe_y, dtype=float)
     return safe_coords, safe_values
 
@@ -682,22 +719,28 @@ def apply_gp_disaster_to_graph(G, gp_params=None):
         raise ValueError("Graph G contains no edges.")
 
     # 2. Ensure Origin and Destination safe anchors (y = -3.0) are always present
-    origin_node, dest_node, o_coord, d_coord = _get_origin_and_destination_coords(G)
+    pairs = _resolve_od_pairs(G)
+    all_od_nodes = {n for pair in pairs for n in pair}
+    pos_map = nx.get_node_attributes(G, 'pos')
+    all_od_coords = [np.asarray(pos_map[n], dtype=float) for n in all_od_nodes]
+
     anchor_coords = gp_params.get('anchor_coords', None)
     anchor_values = gp_params.get('anchor_values', None)
 
     if anchor_coords is None or anchor_values is None:
-        safe_coords, safe_values = _extract_safe_guardian_anchors(G, safe_y=safe_y, ring_radius=0.04)
+        safe_coords, safe_values = _extract_safe_guardian_anchors(G, safe_y=safe_y, ring_radius=0.04, od_pairs=pairs)
         anchor_coords = safe_coords
         anchor_values = safe_values
     else:
         anchor_coords = np.atleast_2d(np.asarray(anchor_coords, dtype=float))
         anchor_values = np.asarray(anchor_values, dtype=float).ravel()
-        # Verify Origin and Destination are anchored at safe_y
-        dist_o = np.min(np.linalg.norm(anchor_coords - o_coord, axis=1))
-        dist_d = np.min(np.linalg.norm(anchor_coords - d_coord, axis=1))
-        if dist_o > 1e-3 or dist_d > 1e-3:
-            safe_coords, safe_values = _extract_safe_guardian_anchors(G, safe_y=safe_y, ring_radius=0.04)
+        # Verify all active Origins and Destinations are anchored at safe_y
+        missing_safe = any(
+            np.min(np.linalg.norm(anchor_coords - c, axis=1)) > 1e-3
+            for c in all_od_coords
+        )
+        if missing_safe:
+            safe_coords, safe_values = _extract_safe_guardian_anchors(G, safe_y=safe_y, ring_radius=0.04, od_pairs=pairs)
             anchor_coords = np.vstack([anchor_coords, safe_coords])
             anchor_values = np.concatenate([anchor_values, safe_values])
 
@@ -723,14 +766,14 @@ def apply_gp_disaster_to_graph(G, gp_params=None):
         max_blockage_prob=max_blockage_prob
     )
 
-    # Guarantee edges directly incident to Origin or Destination have near-zero blockage
+    # Guarantee edges directly incident to any Origin or Destination have near-zero blockage
     # consistent with the y = -3.0 safe anchor condition
     safe_prob_floor = logistic_cost_mapping(safe_y, k_steepness=k_steepness, y_offset=y_offset)
 
     for idx, (u, v) in enumerate(edge_list):
         q_val = float(q_edges[idx])
-        if u in (origin_node, dest_node) or v in (origin_node, dest_node):
-            # Smoothly cap incident spawn/goal edges so the agent is never trapped at step 0
+        if u in all_od_nodes or v in all_od_nodes:
+            # Smoothly cap incident spawn/goal edges so no agent is trapped at step 0
             q_val = min(q_val, float(safe_prob_floor))
 
         G.edges[u, v]['midpoint'] = (float(midpoints[idx, 0]), float(midpoints[idx, 1]))
@@ -763,22 +806,18 @@ def apply_gp_disaster_to_graph(G, gp_params=None):
     return G, gp_state
 
 
-def sample_gp_disaster_realization(G, max_resamples=1000, allow_relaxation=True):
+def sample_gp_disaster_realization(G, max_resamples=1000, allow_relaxation=True, od_pairs=None):
     """
     Draws Bernoulli trials B_e ~ Bern(q_e) for every edge in G based on the GP-derived
-    blockage probabilities q_e. Verifies that an Origin -> Destination path exists
-    in G_offline, using multi-stage relaxation and a safest-path fallback if needed.
+    blockage probabilities q_e. Verifies that an O_k -> D_k path exists in G_offline
+    for EVERY (O_k, D_k) in `od_pairs` (defaulting to G.graph.get("od_pairs") or
+    [(origin, destination)]), using multi-stage relaxation and a safest-path fallback if needed.
 
     Returns:
         G_offline (nx.Graph): Graph with blocked edges removed.
         blocked_edges (list): List of edges (u, v) that failed in this realization.
     """
-    nodes = list(G.nodes())
-    origins = [n for n, d in G.nodes(data=True) if d.get('is_origin', False)]
-    destinations = [n for n, d in G.nodes(data=True) if d.get('is_destination', False)]
-
-    origin = origins[0] if origins else min(nodes)
-    destination = destinations[0] if destinations else max(nodes)
+    pairs = _resolve_od_pairs(G, od_pairs=od_pairs)
 
     scale = 1.0
     max_relax_stages = 6 if allow_relaxation else 1
@@ -798,21 +837,22 @@ def sample_gp_disaster_realization(G, max_resamples=1000, allow_relaxation=True)
                     blocked_edges.append((u, v))
                     G_offline.remove_edge(u, v)
 
-            if nx.has_path(G_offline, origin, destination):
+            if all(nx.has_path(G_offline, o_k, d_k) for o_k, d_k in pairs):
                 return G_offline, blocked_edges
 
         scale *= 0.80
 
-    if allow_relaxation and nx.has_path(G, origin, destination):
+    if allow_relaxation and all(nx.has_path(G, o_k, d_k) for o_k, d_k in pairs):
         def edge_risk_weight(u, v, d):
             q = min(0.999, d.get('blockage_prob', 0.0))
             return -np.log(1.0 - q)
 
-        safest_path = nx.shortest_path(G, origin, destination, weight=edge_risk_weight)
-        protected_edges = {
-            (min(safest_path[k], safest_path[k + 1]), max(safest_path[k], safest_path[k + 1]))
-            for k in range(len(safest_path) - 1)
-        }
+        protected_edges = set()
+        for o_k, d_k in pairs:
+            safest_path = nx.shortest_path(G, o_k, d_k, weight=edge_risk_weight)
+            for idx in range(len(safest_path) - 1):
+                u_p, v_p = safest_path[idx], safest_path[idx + 1]
+                protected_edges.add((min(u_p, v_p), max(u_p, v_p)))
 
         G_offline = G.copy()
         blocked_edges = []
@@ -832,7 +872,7 @@ def sample_gp_disaster_realization(G, max_resamples=1000, allow_relaxation=True)
         return G_offline, blocked_edges
 
     raise RuntimeError(
-        f"Failed to sample an O->D connected G_offline after {max_resamples} attempts."
+        f"Failed to sample an O->D connected G_offline for pairs {pairs} after {max_resamples} attempts."
     )
 
 
@@ -961,9 +1001,9 @@ def visualize_gaussian_disaster(G, gp_params=None, show_labels=True, grid_res=10
 
     # 2. Extract Node Positions & Categories
     pos = nx.get_node_attributes(G, 'pos')
-    origins = [n for n, attr in G.nodes(data=True) if attr.get('is_origin')]
-    destinations = [n for n, attr in G.nodes(data=True) if attr.get('is_destination')]
-    standard_nodes = [n for n in G.nodes() if n not in origins and n not in destinations]
+    pairs = _resolve_od_pairs(G)
+    od_node_set = {n for pair in pairs for n in pair}
+    standard_nodes = [n for n in G.nodes() if n not in od_node_set]
 
     # 3. Draw Edges Color-Coded by Blockage Probability q_e ('YlOrRd')
     edge_cmap = mpl.colormaps['YlOrRd']
@@ -1009,20 +1049,63 @@ def visualize_gaussian_disaster(G, gp_params=None, show_labels=True, grid_res=10
             ax=ax
         )
 
-    # 5. Overlay Nodes (Origin as Star, Destination as X)
+    # 5. Overlay Nodes (Origin as Star, Destination as X, supporting 1 or multiple OD pairs)
     nx.draw_networkx_nodes(
         G, pos, nodelist=standard_nodes, node_size=140,
         node_color='white', edgecolors='black', linewidths=1.2, ax=ax
     )
-    nx.draw_networkx_nodes(
-        G, pos, nodelist=origins, node_size=380,
-        node_color='dodgerblue', node_shape='*', edgecolors='black', linewidths=1.5, ax=ax
-    )
-    nx.draw_networkx_nodes(
-        G, pos, nodelist=destinations, node_size=320,
-        node_color='crimson', node_shape='X', edgecolors='black', linewidths=1.5, ax=ax
-    )
+
+    agent_palette = [
+        ('dodgerblue', 'crimson'),
+        ('limegreen', 'darkorange'),
+        ('magenta', 'gold'),
+        ('cyan', 'blueviolet'),
+    ]
+    legend_handles = []
+    role_tags = {}
+
+    for k_idx, (o_node, d_node) in enumerate(pairs):
+        o_col, d_col = agent_palette[k_idx % len(agent_palette)]
+        if len(pairs) > 1:
+            o_col = d_col = ['dodgerblue', 'limegreen', 'magenta', 'darkorange', 'cyan'][k_idx % 5]
+        nx.draw_networkx_nodes(
+            G, pos, nodelist=[o_node], node_size=400,
+            node_color=o_col, node_shape='*', edgecolors='black', linewidths=1.5, ax=ax
+        )
+        nx.draw_networkx_nodes(
+            G, pos, nodelist=[d_node], node_size=320,
+            node_color=d_col, node_shape='X', edgecolors='black', linewidths=1.5, ax=ax
+        )
+        tag_o = f"O{k_idx + 1}" if len(pairs) > 1 else "O"
+        tag_d = f"D{k_idx + 1}" if len(pairs) > 1 else "D"
+        role_tags.setdefault(o_node, []).append(tag_o)
+        role_tags.setdefault(d_node, []).append(tag_d)
+
+        legend_handles.append(
+            Line2D([0], [0], marker='*', color='w',
+                   label=f"{tag_o} (Node {o_node}) [Safe $y=-3.0$]",
+                   markerfacecolor=o_col, markersize=14, markeredgecolor='k')
+        )
+        legend_handles.append(
+            Line2D([0], [0], marker='X', color='w',
+                   label=f"{tag_d} (Node {d_node}) [Safe $y=-3.0$]",
+                   markerfacecolor=d_col, markersize=12, markeredgecolor='k')
+        )
+
     nx.draw_networkx_labels(G, pos, font_size=7, font_weight='bold', ax=ax)
+    for node_id, tags in role_tags.items():
+        x_n, y_n = pos[node_id]
+        ax.annotate(
+            "/".join(tags),
+            xy=(x_n, y_n),
+            xytext=(6, 8),
+            textcoords='offset points',
+            fontsize=8.5,
+            fontweight='bold',
+            color='black',
+            bbox=dict(boxstyle='round,pad=0.18', facecolor='yellow', alpha=0.85, edgecolor='black', lw=0.7),
+            zorder=8,
+        )
 
     # 6. Plot Formatting & Legend
     ax.set_xlim(0.0, 1.0)
@@ -1031,16 +1114,12 @@ def visualize_gaussian_disaster(G, gp_params=None, show_labels=True, grid_res=10
     ax.set_ylabel("Y", fontsize=11)
     ax.grid(True, linestyle='--', alpha=0.35)
 
-    legend_handles = [
-        Line2D([0], [0], marker='*', color='w', label='Origin (O) [Safe Anchor $y=-3.0$]',
-               markerfacecolor='dodgerblue', markersize=14, markeredgecolor='k'),
-        Line2D([0], [0], marker='X', color='w', label='Destination (D) [Safe Anchor $y=-3.0$]',
-               markerfacecolor='crimson', markersize=12, markeredgecolor='k'),
+    legend_handles.extend([
         Line2D([0], [0], marker='o', color='w', label='Intermediate Node',
                markerfacecolor='white', markersize=8, markeredgecolor='k'),
         Line2D([0], [0], marker='o', color='w', label='Disaster Anchor ($t_L$)',
                markerfacecolor='none', markersize=9, markeredgecolor='k', markeredgewidth=1.8),
-    ]
+    ])
     ax.legend(handles=legend_handles, loc='upper left', framealpha=0.9, fontsize=9)
 
     plt.tight_layout()
@@ -1051,15 +1130,17 @@ def visualize_gaussian_disaster(G, gp_params=None, show_labels=True, grid_res=10
 # 6. Example Execution Script
 # ==========================================
 if __name__ == "__main__":
-    from graph_builder import SpatialGraphGenerator
+    from graph_builder import SpatialGraphGenerator, sample_od_pairs
 
-    # 1. Build a synthetic multi-district spatial network
-    builder = SpatialGraphGenerator(n_nodes=40, d_min=0.04)
-    G_base, _ = builder.build_graph(regime='multidistrict', C=6)
+    # 1. Build a single base multi-district spatial network
+    builder = SpatialGraphGenerator(n_nodes=50, d_min=0.04)
+    G_base, _ = builder.build_graph(regime='multidistrict', C=5)
 
-    # 2. Demonstrate all three structured GP Posterior Disaster Topologies
-    for mode in ['earthquake', 'tsunami', 'flood']:
+    # 2. Sample fresh 1-agent OD pairs across multiple disaster realizations on the same base graph
+    print("=== Single-Agent Multi-Scenario GP Disaster Verification ===")
+    for idx, mode in enumerate(['earthquake', 'tsunami', 'flood'], start=1):
         G_sim = G_base.copy()
+        od_1 = sample_od_pairs(G_sim, num_agents=1, rng=100 + idx)
         G_sim, gp_state = set_disaster_type(
             G_sim,
             disaster_type=mode,
@@ -1068,11 +1149,33 @@ if __name__ == "__main__":
             safe_y=-3.0,
             k_steepness=0.6,
             y_offset=1.5,
+            seed=idx,
         )
-        G_offline, blocked_edges = sample_gp_disaster_realization(G_sim)
+        G_offline, blocked_edges = sample_gp_disaster_realization(G_sim, od_pairs=od_1)
+        o1, d1 = od_1[0]
         print(
-            f"[{mode.upper()}] Total Edges: {G_sim.number_of_edges()} | "
-            f"Blocked in Realization: {len(blocked_edges)} | "
-            f"Remaining in G_offline: {G_offline.number_of_edges()}"
+            f"[{mode.upper()} | 1-Agent OD={od_1[0]}] Total Edges: {G_sim.number_of_edges()} | "
+            f"Blocked: {len(blocked_edges)} | Remaining: {G_offline.number_of_edges()} | "
+            f"Connected(O1->D1): {nx.has_path(G_offline, o1, d1)}"
         )
-        visualize_gaussian_disaster(G_sim, gp_state, show_labels=True)
+
+    # 3. Verify 2-agent and 3-agent perimeter OD pairs and multi-agent G_offline connectivity
+    print("\n=== Multi-Agent GP Disaster Offline Connectivity Verification ===")
+    for num_agents in [2, 3]:
+        G_multi = G_base.copy()
+        od_k = sample_od_pairs(G_multi, num_agents=num_agents, avoid_od_overlap=True, rng=300 + num_agents)
+        G_multi, gp_state = set_disaster_type(
+            G_multi,
+            disaster_type='earthquake',
+            num_epicenters=1,
+            safe_y=-3.0,
+            seed=42 + num_agents,
+        )
+        G_offline, blocked_edges = sample_gp_disaster_realization(G_multi, od_pairs=od_k)
+        conn_status = [nx.has_path(G_offline, o, d) for o, d in od_k]
+        print(
+            f"[{num_agents}-Agent GP Realization] od_pairs={od_k} | "
+            f"Blocked: {len(blocked_edges)}/{G_multi.number_of_edges()} | "
+            f"All Agents Connected in G_offline: {all(conn_status)} ({conn_status})"
+        )
+        visualize_gaussian_disaster(G_multi, gp_state, show_labels=True)

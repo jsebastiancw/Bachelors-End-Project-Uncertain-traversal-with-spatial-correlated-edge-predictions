@@ -147,25 +147,50 @@ def apply_disaster_probabilities(G, disaster_config, num_edge_samples=10, max_bl
     return G
 
 
-def sample_disaster_realization(G, max_resamples=1000, allow_relaxation=True):
+def _resolve_od_pairs(G, od_pairs=None):
+    """
+    Resolves the active list of (O_k, D_k) pairs for single- or multi-agent routing.
+    Defaults to `G.graph.get("od_pairs")` or `[(origin, destination)]`.
+    """
+    if od_pairs is not None and len(od_pairs) > 0:
+        return [(int(o), int(d)) for o, d in od_pairs]
+
+    graph_pairs = G.graph.get('od_pairs')
+    if graph_pairs and len(graph_pairs) > 0:
+        return [(int(o), int(d)) for o, d in graph_pairs]
+
+    if 'origin' in G.graph and 'destination' in G.graph:
+        return [(int(G.graph['origin']), int(G.graph['destination']))]
+
+    nodes = list(G.nodes())
+    origins = [n for n, d in G.nodes(data=True) if d.get('is_origin', False)]
+    destinations = [n for n, d in G.nodes(data=True) if d.get('is_destination', False)]
+
+    if origins and destinations and len(origins) == len(destinations):
+        origins_sorted = sorted(origins, key=lambda n: (G.nodes[n].get('origin_agent_idx') is None, G.nodes[n].get('origin_agent_idx', 0)))
+        dests_sorted = sorted(destinations, key=lambda n: (G.nodes[n].get('destination_agent_idx') is None, G.nodes[n].get('destination_agent_idx', 0)))
+        return [(int(o), int(d)) for o, d in zip(origins_sorted, dests_sorted)]
+
+    origin = int(origins[0]) if origins else int(min(nodes))
+    destination = int(destinations[0]) if destinations else int(max(nodes))
+    return [(origin, destination)]
+
+
+def sample_disaster_realization(G, max_resamples=1000, allow_relaxation=True, od_pairs=None):
     """
     Draws independent Bernoulli trials B_e ~ Bern(q_e) for every edge in G.
-    Verifies if Origin (0) -> Destination (N-1) remains connected in G_offline.
-    Resamples edge statuses until a traversable O -> D path exists (den Hollander, 2025).
+    Verifies if every (O_k, D_k) in `od_pairs` (defaulting to G.graph.get("od_pairs")
+    or [(origin, destination)]) remains connected in G_offline.
+    Resamples edge statuses until a traversable O_k -> D_k path exists for all agents.
     If max_resamples is exceeded and allow_relaxation=True, gradually scales down
-    blockage probabilities or preserves the safest O -> D path so extreme disaster
+    blockage probabilities or preserves the safest O_k -> D_k paths so extreme disaster
     configurations remain playable without raising an exception.
     
     Returns:
         G_offline (nx.Graph): Graph with blocked edges removed.
         blocked_edges (list): List of edges (u, v) that failed in this realization.
     """
-    nodes = list(G.nodes())
-    origins = [n for n, d in G.nodes(data=True) if d.get('is_origin', False)]
-    destinations = [n for n, d in G.nodes(data=True) if d.get('is_destination', False)]
-    
-    origin = origins[0] if origins else min(nodes)
-    destination = destinations[0] if destinations else max(nodes)
+    pairs = _resolve_od_pairs(G, od_pairs=od_pairs)
     
     scale = 1.0
     max_relax_stages = 6 if allow_relaxation else 1
@@ -187,22 +212,23 @@ def sample_disaster_realization(G, max_resamples=1000, allow_relaxation=True):
                     blocked_edges.append((u, v))
                     G_offline.remove_edge(u, v)
                     
-            if nx.has_path(G_offline, origin, destination):
+            if all(nx.has_path(G_offline, o_k, d_k) for o_k, d_k in pairs):
                 return G_offline, blocked_edges
                 
         scale *= 0.80
         
-    if allow_relaxation and nx.has_path(G, origin, destination):
-        # Fallback: preserve the minimum-risk O -> D path to guarantee connectivity
+    if allow_relaxation and all(nx.has_path(G, o_k, d_k) for o_k, d_k in pairs):
+        # Fallback: preserve the minimum-risk O_k -> D_k path for every agent to guarantee connectivity
         def edge_risk_weight(u, v, d):
             q = min(0.999, d.get('blockage_prob', 0.0))
             return -np.log(1.0 - q)
             
-        safest_path = nx.shortest_path(G, origin, destination, weight=edge_risk_weight)
-        protected_edges = {
-            (min(safest_path[k], safest_path[k + 1]), max(safest_path[k], safest_path[k + 1]))
-            for k in range(len(safest_path) - 1)
-        }
+        protected_edges = set()
+        for o_k, d_k in pairs:
+            safest_path = nx.shortest_path(G, o_k, d_k, weight=edge_risk_weight)
+            for idx in range(len(safest_path) - 1):
+                u_p, v_p = safest_path[idx], safest_path[idx + 1]
+                protected_edges.add((min(u_p, v_p), max(u_p, v_p)))
         
         G_offline = G.copy()
         blocked_edges = []
@@ -222,7 +248,7 @@ def sample_disaster_realization(G, max_resamples=1000, allow_relaxation=True):
         return G_offline, blocked_edges
             
     raise RuntimeError(
-        f"Failed to sample an O->D connected G_offline after {max_resamples} attempts. "
+        f"Failed to sample an O->D connected G_offline for pairs {pairs} after {max_resamples} attempts. "
         "Consider reducing disaster intensity (gamma) or domain radius (h)."
     )
 
@@ -233,7 +259,7 @@ def visualize_graph_with_disaster(G, disaster_config, show_labels=True, grid_res
     - Background: Continuous point-failure probability field f(r) using RdYlGn_r / YlOrRd.
     - Edges: Color-coded by aggregate blockage probability q_e (YlOrRd gradient).
     - Labels: Annotates numerical q_e values next to each edge segment.
-    - Nodes: Plots intermediate nodes, Origin (O), and Destination (D).
+    - Nodes: Plots intermediate nodes and single or multiple (O_k, D_k) pairs.
     """
     fig, ax = plt.subplots(figsize=(13, 10))
     ax.set_title("Spatial Road Network & Disaster Hazard Field ($q_e$)", fontsize=15, fontweight='bold')
@@ -257,9 +283,9 @@ def visualize_graph_with_disaster(G, disaster_config, show_labels=True, grid_res
     
     # 2. Extract Node Positions & Categories
     pos = nx.get_node_attributes(G, 'pos')
-    origins = [n for n, attr in G.nodes(data=True) if attr.get('is_origin')]
-    destinations = [n for n, attr in G.nodes(data=True) if attr.get('is_destination')]
-    standard_nodes = [n for n in G.nodes() if n not in origins and n not in destinations]
+    pairs = _resolve_od_pairs(G)
+    od_node_set = {n for pair in pairs for n in pair}
+    standard_nodes = [n for n in G.nodes() if n not in od_node_set]
     
     # 3. Draw Edges Color-Coded by Blockage Probability q_e
     edge_cmap = mpl.colormaps['YlOrRd']
@@ -303,15 +329,56 @@ def visualize_graph_with_disaster(G, disaster_config, show_labels=True, grid_res
         G, pos, nodelist=standard_nodes, node_size=140,
         node_color='white', edgecolors='black', linewidths=1.2, ax=ax
     )
-    nx.draw_networkx_nodes(
-        G, pos, nodelist=origins, node_size=380,
-        node_color='dodgerblue', node_shape='*', edgecolors='black', linewidths=1.5, ax=ax
-    )
-    nx.draw_networkx_nodes(
-        G, pos, nodelist=destinations, node_size=320,
-        node_color='crimson', node_shape='X', edgecolors='black', linewidths=1.5, ax=ax
-    )
+
+    agent_palette = [
+        ('dodgerblue', 'crimson'),
+        ('limegreen', 'darkorange'),
+        ('magenta', 'gold'),
+        ('cyan', 'blueviolet'),
+    ]
+    legend_handles = []
+    role_tags = {}
+
+    for k_idx, (o_node, d_node) in enumerate(pairs):
+        o_col, d_col = agent_palette[k_idx % len(agent_palette)]
+        if len(pairs) > 1:
+            o_col = d_col = ['dodgerblue', 'limegreen', 'magenta', 'darkorange', 'cyan'][k_idx % 5]
+        nx.draw_networkx_nodes(
+            G, pos, nodelist=[o_node], node_size=380,
+            node_color=o_col, node_shape='*', edgecolors='black', linewidths=1.5, ax=ax
+        )
+        nx.draw_networkx_nodes(
+            G, pos, nodelist=[d_node], node_size=320,
+            node_color=d_col, node_shape='X', edgecolors='black', linewidths=1.5, ax=ax
+        )
+        tag_o = f"O{k_idx + 1}" if len(pairs) > 1 else "O"
+        tag_d = f"D{k_idx + 1}" if len(pairs) > 1 else "D"
+        role_tags.setdefault(o_node, []).append(tag_o)
+        role_tags.setdefault(d_node, []).append(tag_d)
+
+        legend_handles.append(
+            Line2D([0], [0], marker='*', color='w', label=f'Origin {tag_o} (Node {o_node})',
+                   markerfacecolor=o_col, markersize=14, markeredgecolor='k')
+        )
+        legend_handles.append(
+            Line2D([0], [0], marker='X', color='w', label=f'Destination {tag_d} (Node {d_node})',
+                   markerfacecolor=d_col, markersize=12, markeredgecolor='k')
+        )
+
     nx.draw_networkx_labels(G, pos, font_size=7, font_weight='bold', ax=ax)
+    for node_id, tags in role_tags.items():
+        x_n, y_n = pos[node_id]
+        ax.annotate(
+            "/".join(tags),
+            xy=(x_n, y_n),
+            xytext=(6, 8),
+            textcoords='offset points',
+            fontsize=8.5,
+            fontweight='bold',
+            color='black',
+            bbox=dict(boxstyle='round,pad=0.18', facecolor='yellow', alpha=0.85, edgecolor='black', lw=0.7),
+            zorder=8,
+        )
     
     # 6. Plot Formatting & Legend
     ax.set_xlim(0.0, 1.0)
@@ -320,12 +387,10 @@ def visualize_graph_with_disaster(G, disaster_config, show_labels=True, grid_res
     ax.set_ylabel("Y", fontsize=11)
     ax.grid(True, linestyle='--', alpha=0.35)
     
-    legend_handles = [
-        Line2D([0], [0], marker='*', color='w', label='Origin (O)', markerfacecolor='dodgerblue', markersize=14, markeredgecolor='k'),
-        Line2D([0], [0], marker='X', color='w', label='Destination (D)', markerfacecolor='crimson', markersize=12, markeredgecolor='k'),
+    legend_handles.extend([
         Line2D([0], [0], marker='o', color='w', label='Intermediate Node', markerfacecolor='white', markersize=8, markeredgecolor='k'),
         Line2D([0], [0], marker='o', color='w', label='Disaster Epicenter', markerfacecolor='none', markersize=10, markeredgecolor='k', markeredgewidth=2)
-    ]
+    ])
     ax.legend(handles=legend_handles, loc='upper left', framealpha=0.9, fontsize=9)
     
     plt.tight_layout()
@@ -348,9 +413,10 @@ def generate_random_disaster(num_epicenters=3, G=None, safe_buffer=0.12):
     protected_coords = []
     if G is not None:
         pos = nx.get_node_attributes(G, 'pos')
-        for n, d in G.nodes(data=True):
-            if d.get('is_origin', False) or d.get('is_destination', False):
-                protected_coords.append(np.array(pos[n]))
+        pairs = _resolve_od_pairs(G)
+        for o_n, d_n in pairs:
+            protected_coords.append(np.array(pos[o_n]))
+            protected_coords.append(np.array(pos[d_n]))
     
     for _ in range(num_epicenters):
         for _ in range(100):
@@ -377,24 +443,39 @@ def generate_random_disaster(num_epicenters=3, G=None, safe_buffer=0.12):
 # 3. Example Execution Script
 # ==========================================
 if __name__ == "__main__":
-    from graph_builder import SpatialGraphGenerator
+    from graph_builder import SpatialGraphGenerator, sample_od_pairs
     
-    #np.random.seed(42)
+    # 1. Build a synthetic spatial network
+    builder = SpatialGraphGenerator(n_nodes=45, d_min=0.04)
+    G_base, _ = builder.build_graph(regime='multidistrict', C=4)
     
-    # 1. Build a 50-node synthetic spatial network (den Hollander Base Case scale)
-    builder = SpatialGraphGenerator(n_nodes=30, d_min=0.05)
-    G, _ = builder.build_graph(regime='multidistrict', C=4)
-    
-    # 2. Define the 4-Epicenter Ellipsoidal Disaster Scenario (den Hollander, 2025 - Eq. 8.1)
-    # K = {(x0, y0, f, h, gamma, a, b, phi)_k}
-    disaster_config = generate_random_disaster(num_epicenters=3, G=G)
-    
-    # 3. Compute Point-to-Edge Risks and Poisson Binomial Edge Blockage Probabilities (m = 10)
-    G = apply_disaster_probabilities(G, disaster_config, num_edge_samples=10)
-    
-    # 4. Sample a valid O -> D connected disaster realization
-    G_offline, blocked_edges = sample_disaster_realization(G)
-    print(f"Total Edges: {G.number_of_edges()} | Blocked in Realization: {len(blocked_edges)} | Remaining in G_offline: {G_offline.number_of_edges()}")
-    
-    # 5. Render the Hazard Field, Network Topology, and Edge Blockage Probabilities q_e
-    visualize_graph_with_disaster(G, disaster_config, show_labels=True)
+    # 2. Sample fresh 1-agent OD pairs across multiple disaster realizations
+    print("=== Single-Agent Multi-Realization Ellipsoidal Disaster Verification ===")
+    for trial in range(1, 4):
+        G_trial = G_base.copy()
+        od_1 = sample_od_pairs(G_trial, num_agents=1, rng=10 + trial)
+        disaster_cfg = generate_random_disaster(num_epicenters=3, G=G_trial)
+        G_trial = apply_disaster_probabilities(G_trial, disaster_cfg, num_edge_samples=10)
+        G_offline, blocked_edges = sample_disaster_realization(G_trial, od_pairs=od_1)
+        o1, d1 = od_1[0]
+        print(
+            f"[Trial {trial} | 1-Agent OD={od_1[0]}] Total Edges: {G_trial.number_of_edges()} | "
+            f"Blocked: {len(blocked_edges)} | Remaining: {G_offline.number_of_edges()} | "
+            f"Connected(O1->D1): {nx.has_path(G_offline, o1, d1)}"
+        )
+
+    # 3. Sample 2-agent and 3-agent perimeter OD pairs and verify multi-agent G_offline connectivity
+    print("\n=== Multi-Agent Ellipsoidal Disaster Connectivity Verification ===")
+    for num_agents in [2, 3]:
+        G_multi = G_base.copy()
+        od_k = sample_od_pairs(G_multi, num_agents=num_agents, avoid_od_overlap=True, rng=50 + num_agents)
+        disaster_config = generate_random_disaster(num_epicenters=3, G=G_multi)
+        G_multi = apply_disaster_probabilities(G_multi, disaster_config, num_edge_samples=10)
+        G_offline, blocked_edges = sample_disaster_realization(G_multi, od_pairs=od_k)
+        conn_status = [nx.has_path(G_offline, o, d) for o, d in od_k]
+        print(
+            f"[{num_agents}-Agent Realization] od_pairs={od_k} | "
+            f"Blocked: {len(blocked_edges)}/{G_multi.number_of_edges()} | "
+            f"All Agents Connected in G_offline: {all(conn_status)} ({conn_status})"
+        )
+        visualize_graph_with_disaster(G_multi, disaster_config, show_labels=True)
